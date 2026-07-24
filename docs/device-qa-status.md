@@ -1,0 +1,9 @@
+# Device QA status
+
+**Real iOS/Android hardware verification: still an open gap, not resolved.** game-debugger had no Xcode/iOS Simulator, no adb/Android emulator, and no device-farm (BrowserStack) access, and correctly declined to toggle Safari's systemwide Remote Automation setting itself. It ran Playwright's real WebKit engine (genuine Apple WebKit, not Chromium) at an iPhone 13 viewport as the closest available proxy.
+
+**Passed under the WebKit-engine proxy:** drag pick-up/follow/drop, corner/boundary placement, off-canvas release, `pointercancel` mid-drag, `touch-action:none`/`overscroll-behavior:none` computed styles, no horizontal overflow at 390px, visual rendering. No fix needed.
+
+**Still unverified, cannot be verified without real hardware:** elastic overscroll, edge-swipe-back, Dynamic Island/safe-area handling, genuine OS-level multi-touch gesture routing, and specifically whether touch-drag triggers page-scroll on real hardware (synthetic PointerEvents don't route through the OS gesture recognizer the way real touch does).
+
+**Decision (project-manager call):** accept the WebKit-proxy pass as sufficient confidence to continue pre-production/design work. Do not block the project on hardware access at this stage — the core mechanic doesn't depend on device-specific gesture quirks, and a scroll-hijack bug found later is fixable, not a redesign risk. **Defer true real-device verification to release-manager's export/build stage**, where it becomes unavoidable anyway (an actual packaged mobile build is a stronger, more meaningful thing to test on real hardware than a bare local-server HTML prototype). Non-blocking suggestion carried over from the debugger's report: consider `-webkit-touch-callout: none` on the canvas/stage-wrap at that point, though likely unnecessary since `<canvas>` isn't normally subject to iOS's long-press callout.

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Fracture — gray-box prototype</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #1b1d23; color: #e8e8ec;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior: none;
+  }
+  #app {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 12px; gap: 8px; max-width: 720px; margin: 0 auto;
+  }
+  header { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; color: #cfd3dc; }
+  h1 small { color: #6d7180; font-weight: 400; }
+  #scoreLine { font-size: 15px; color: #e8e8ec; }
+  #scoreLine b { color: #f1c40f; }
+  button {
+    background: #2f333d; color: #e8e8ec; border: 1px solid #454a58;
+    border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: #3a3f4b; }
+  #stage-wrap { position: relative; touch-action: none; }
+  canvas { display: block; touch-action: none; background: #22242c; border-radius: 8px; }
+  #overlay {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px;
+    background: rgba(10,10,14,0.82); border-radius: 8px;
+  }
+  #overlay.show { display: flex; }
+  #overlay h2 { margin: 0; font-size: 22px; }
+  #legend { font-size: 11px; color: #7a7e8c; width: 100%; text-align: left; line-height: 1.5; }
+  #log {
+    width: 100%; height: 140px; overflow-y: auto; background: #16171c;
+    border: 1px solid #2c2f38; border-radius: 6px; padding: 8px 10px;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px;
+    color: #9aa0ae; line-height: 1.5;
+  }
+  #log .warn { color: #f1c40f; }
+  #log .over { color: #e74c3c; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Fracture <small>gray-box prototype</small></h1>
+    <div id="scoreLine">Score: <b id="scoreVal">0</b></div>
+    <button id="newGameBtn">New Game</button>
+  </header>
+
+  <div id="stage-wrap">
+    <canvas id="stage"></canvas>
+    <div id="overlay">
+      <h2>Game Over</h2>
+      <div id="finalScore"></div>
+      <button id="restartBtn">Play Again</button>
+    </div>
+  </div>
+
+  <div id="legend">
+    Drag a tray piece (bottom row) onto the grid. Filling a row/column clears
+    it and scatters 1-3 colored "shards" back onto the board via the shard
+    queue (top row of slots) — shard color matches the piece that triggered
+    the clear. If the queue fills up, the next shard force-inserts straight
+    into your active tray instead of waiting. No timer. Game over when
+    nothing in the tray fits anywhere on the board.
+  </div>
+
+  <div id="log"></div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
