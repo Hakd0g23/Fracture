@@ -142,16 +142,124 @@ function shapeExtent(cells) {
   return { rows: maxR + 1, cols: maxC + 1 };
 }
 
-function drawPieceGrid(cells, color, ox, oy, subcell) {
+// ---- Style B: flat geometric shard rendering -------------------------------
+// The legibility test from docs/art-direction.md: a shard and a same-shaped
+// regular piece must read as visually distinct BEFORE any further style
+// polish, not just via the "shard" text label (a functional fallback, not a
+// design solution -- removed below now that the silhouette itself carries
+// the signal). Regular pieces stay solid inset rounded-rect blocks that tile
+// edge-to-edge. Shard cells render instead as small, irregular, angular
+// "chip" facets with a visible gap between adjacent cells (even for a
+// 2-cell domino shard, so it never reads as one contiguous block) and a
+// two-tone flat facet split -- angular + gapped + two-tone -- with no
+// gradients, so it stays "flat geometric" (the gradient/glass faceted look
+// is reserved for style A). Verified by construction: a 1x1 shard_mono and a
+// 1x1 mono piece pass the same cells/size into drawPieceGrid and produce
+// deliberately different silhouettes, not just a color/label difference.
+
+function strHash(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return h >>> 0;
+}
+
+function hash2(a, b) {
+  // Deterministic small-int hash -> [0,1). Pure function of (a,b), so a
+  // shard's jagged outline is stable across redraws instead of jittering
+  // every frame.
+  let h = (a * 374761393 + b * 668265263) ^ (a << 13);
+  h = Math.imul(h ^ (h >>> 15), 2246822519);
+  h = (h ^ (h >>> 13)) >>> 0;
+  return h / 4294967295;
+}
+
+function shadeColor(hex, amt) {
+  // amt in [-1,1]; negative darkens toward black, positive lightens toward
+  // white. Used for flat two-tone facets and a subtle top-edge highlight --
+  // still flat colors, no gradients.
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) & 0xff, g = (n >> 8) & 0xff, b = n & 0xff;
+  const mix = amt < 0 ? 0 : 255;
+  const k = Math.abs(amt);
+  r = Math.round(r + (mix - r) * k);
+  g = Math.round(g + (mix - g) * k);
+  b = Math.round(b + (mix - b) * k);
+  return `rgb(${r},${g},${b})`;
+}
+
+function drawShardChip(cx, cy, size, color, seed) {
+  // Irregular angular polygon (jittered hexagon spokes) inscribed in radius
+  // ~size/2 -- deliberately NOT a rounded rect, so the outline alone already
+  // differs from a regular piece cell at any size.
+  const spokes = 6;
+  const baseR = size / 2;
+  const pts = [];
+  for (let i = 0; i < spokes; i++) {
+    const angle = (Math.PI * 2 * i) / spokes - Math.PI / 2;
+    const jitter = 0.6 + hash2(seed, i) * 0.55; // 0.6..1.15 of baseR
+    pts.push([cx + Math.cos(angle) * baseR * jitter, cy + Math.sin(angle) * baseR * jitter]);
+  }
+  const tracePath = () => {
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+  };
+
+  // Two-tone flat facet split (no gradient): a darker half and a lighter
+  // half of the same base color, clipped to the jagged outline so the split
+  // never bleeds outside the chip.
+  ctx.save();
+  tracePath();
+  ctx.clip();
+  ctx.fillStyle = shadeColor(color, -0.22);
+  ctx.fillRect(cx - baseR, cy - baseR, baseR * 2, baseR * 2);
+  ctx.fillStyle = shadeColor(color, 0.22);
+  const splitAngle = hash2(seed, 99) * Math.PI * 2;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(cx + Math.cos(splitAngle) * baseR * 1.6, cy + Math.sin(splitAngle) * baseR * 1.6);
+  ctx.lineTo(cx + Math.cos(splitAngle + Math.PI * 0.9) * baseR * 1.6, cy + Math.sin(splitAngle + Math.PI * 0.9) * baseR * 1.6);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  tracePath();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+function drawPieceGrid(cells, color, ox, oy, subcell, isShard, shapeId) {
+  const shapeSeed = strHash(shapeId || '');
   for (const [r, c] of cells) {
     const x = ox + c * subcell;
     const y = oy + r * subcell;
-    ctx.fillStyle = color;
-    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-    ctx.lineWidth = 1;
-    roundRect(x + 1, y + 1, subcell - 2, subcell - 2, 3);
-    ctx.fill();
-    ctx.stroke();
+    if (isShard) {
+      // Gap between adjacent shard cells (even within one shard's own
+      // footprint) so a domino shard never reads as a solid contiguous
+      // block the way a regular domino piece does.
+      const gap = Math.max(3, subcell * 0.22);
+      const chipSize = Math.max(4, subcell - gap);
+      const cellSeed = (shapeSeed + r * 131 + c * 977) | 0;
+      drawShardChip(x + subcell / 2, y + subcell / 2, chipSize, color, cellSeed);
+    } else {
+      ctx.fillStyle = color;
+      roundRect(x + 1, y + 1, subcell - 2, subcell - 2, 4);
+      ctx.fill();
+      // Subtle flat top-edge highlight -- still a flat color (lighter shade
+      // of the fill), not a gradient; a small refinement over the previous
+      // plain single-tone fill.
+      ctx.strokeStyle = shadeColor(color, 0.28);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x + 5, y + 1.5);
+      ctx.lineTo(x + subcell - 5, y + 1.5);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      roundRect(x + 1, y + 1, subcell - 2, subcell - 2, 4);
+      ctx.stroke();
+    }
   }
 }
 
@@ -187,7 +295,7 @@ function draw() {
       const sub = Math.floor((QUEUE_SLOT - 10) / Math.max(ext.rows, ext.cols, 1));
       const ox = x + (QUEUE_SLOT - ext.cols * sub) / 2;
       const oy = y + (QUEUE_SLOT - ext.rows * sub) / 2;
-      drawPieceGrid(shard.shape, shard.color, ox, oy, sub);
+      drawPieceGrid(shard.shape, shard.color, ox, oy, sub, true, shard.shapeId);
     }
   }
 
@@ -214,6 +322,8 @@ function draw() {
       ctx.fillStyle = ok ? 'rgba(46,204,113,0.35)' : 'rgba(231,76,60,0.35)';
       ctx.strokeStyle = ok ? '#2ecc71' : '#e74c3c';
       ctx.lineWidth = 2;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      let anyOnBoard = false;
       for (const [dr, dc] of drag.piece.shape) {
         const rr = target.r + dr, cc = target.c + dc;
         if (rr < 0 || rr >= BOARD_SIZE || cc < 0 || cc >= BOARD_SIZE) continue;
@@ -221,6 +331,25 @@ function draw() {
         const y = layout.gridY + rr * cellSize;
         ctx.fillRect(x, y, cellSize, cellSize);
         ctx.strokeRect(x, y, cellSize, cellSize);
+        anyOnBoard = true;
+        minX = Math.min(minX, x); minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x + cellSize); maxY = Math.max(maxY, y + cellSize);
+      }
+      // Non-color valid/invalid cue, extending the SAME pattern already used
+      // for the overflow tray slot (border color + a non-color glyph) rather
+      // than inventing a new one -- a checkmark/X shape reads as valid vs
+      // invalid regardless of whether the green/red border hues themselves
+      // are distinguishable to the viewer.
+      if (anyOnBoard) {
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        ctx.fillStyle = ok ? '#2ecc71' : '#e74c3c';
+        ctx.font = `bold ${Math.round(Math.min(cellSize * 0.9, 28))}px -apple-system, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(ok ? '✓' : '✕', cx, cy + 1);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'alphabetic';
       }
     }
   }
@@ -261,13 +390,11 @@ function draw() {
       const s = Math.min(sub, subH, 18);
       const ox = x + (TRAY_SLOT_W - ext.cols * s) / 2;
       const oy = y + (TRAY_SLOT_H - ext.rows * s) / 2;
-      drawPieceGrid(piece.shape, piece.color, ox, oy, s);
-      if (piece.isShard) {
-        ctx.fillStyle = '#f1c40f';
-        ctx.font = '9px -apple-system, sans-serif';
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText('shard', x + 4, y + TRAY_SLOT_H - 4);
-      }
+      // No text label here anymore -- the shard's chip silhouette (see
+      // drawPieceGrid) is the actual legibility signal now, not a fallback
+      // "shard" caption. Keeping the label would have masked whether the
+      // silhouette alone actually reads as a fragment.
+      drawPieceGrid(piece.shape, piece.color, ox, oy, s, piece.isShard, piece.shapeId);
     }
   }
 
@@ -278,7 +405,7 @@ function draw() {
     const ox = drag.x - (ext.cols * s) / 2;
     const oy = drag.y - (ext.rows * s) / 2 - 40; // lifted above finger/cursor
     ctx.globalAlpha = 0.95;
-    drawPieceGrid(drag.piece.shape, drag.piece.color, ox, oy, s);
+    drawPieceGrid(drag.piece.shape, drag.piece.color, ox, oy, s, drag.piece.isShard, drag.piece.shapeId);
     ctx.globalAlpha = 1;
   }
 

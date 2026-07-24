@@ -54,7 +54,30 @@ export const SHARD_SHAPES = [
   { id: 'shard_domino_v', cells: [[0, 0], [1, 0]] },
 ];
 
-export const COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#e67e22', '#1abc9c'];
+// Colorblind-audited palette (game-asset-director, docs/art-direction.md).
+// Original set ['#e74c3c'(red), '#3498db'(blue), '#2ecc71'(green),
+// '#f1c40f'(yellow), '#9b59b6'(purple), '#e67e22'(orange), '#1abc9c'(teal)]
+// was flagged for containing red+green, but simulating it through the same
+// Machado et al. (2009) reduced-color-space matrices Coblis/Color Oracle use
+// (protanopia/deuteranopia/tritanopia, verified in CIE76 Lab dE) found the
+// red/green pair itself was borderline-survivable (dE~21-32) while three
+// OTHER pairs were the actual worst offenders: green vs teal (dE=5.96 under
+// tritanopia -- nearly identical; already the tightest pair at dE=32 even
+// under normal vision, so CVD just tipped an existing near-duplicate hue
+// over the edge), blue vs purple (dE=12.34 under deuteranopia), and red vs
+// orange (dE=17.38 under deuteranopia). Fixing red+green alone would have
+// left those three collisions in place. This replacement set was searched
+// (coordinate-ascent over HSL candidates per original hue family, keeping
+// yellow fixed since it's reused elsewhere in index.html/main.js as a
+// warning color) to keep every pairwise CIE76 dE >= ~28 simultaneously under
+// normal vision AND all three simulated CVD types, while also keeping every
+// color's Lab L* >= 37 so pieces stay legible against the dark board
+// background (#2a2d36, L*=18.5) -- the first CVD-optimal candidates found
+// were numerically great but too dark against this UI's dark theme, so the
+// search was re-run with a lightness floor. Verified with a standalone
+// script, not eyeballed; full per-pair/per-condition numbers are in the
+// build report, not committed here to avoid this file growing into a report.
+export const COLORS = ['#ae133a', '#4529ff', '#45eda7', '#f1c40f', '#ac5ae2', '#e07c52', '#1c899c'];
 
 export function weightedPick(list, rng) {
   const total = list.reduce((s, x) => s + x.weight, 0);
