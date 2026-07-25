@@ -7,6 +7,11 @@
     "bake-sprites": "node tools/sprite-bake/bake.mjs"
   },
   "devDependencies": {
-    "playwright": "1.62.0"
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/cli": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/ios": "^8.4.2",
+    "playwright": "1.62.0",
+    "serve": "^14.2.4"
   }
 }

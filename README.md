@@ -4,7 +4,32 @@ Throwaway empirical test harness for one question: does the shard mechanic
 (Sections 2-3 of `docs/design-doc-skeleton.md`) read as tension or as
 punishment? No art, no build step, no engine dependency.
 
-## Run it
+## Run it (Docker)
+
+Docker is the default dev environment — no local Node/npm/Playwright install
+needed.
+
+```
+docker compose up app
+```
+
+Then open `http://localhost:8000/` in a browser. Source files (`index.html`,
+`src/`, `assets/`) are bind-mounted into the container, so edits take effect
+on the next browser refresh — there's no build step to rerun (this is a
+static site, not a bundled app, so there's nothing for a hot-reload watcher
+to recompile).
+
+Run the test/tooling profiles with `docker compose run --rm <service>`:
+
+- `test` — headless unit tests (`tests/core.test.mjs`)
+- `drag-resize-test` — Playwright browser regression test for issue #1
+- `bake-sprites` — regenerates `assets/sprites/shard-atlas.png`
+
+`docker compose build` rebuilds the image after a `package.json` change.
+Installed dependencies live in a named `node_modules` Docker volume, not on
+the host.
+
+### Run it without Docker
 
 Browser ES modules require an HTTP origin (not `file://`). From this
 directory:
@@ -14,7 +39,10 @@ python3 -m http.server 8000
 ```
 
 Then open `http://localhost:8000/` in a browser. Any static file server works
-equally well (`npx serve`, etc.) — nothing here is Python-specific.
+equally well (`npx serve`, etc.) — nothing here is Python-specific. Running
+`tests/drag-resize.playwright.mjs` or `tools/sprite-bake/bake.mjs` this way
+requires `npm install` and a local Playwright browser install
+(`npx playwright install chromium`).
 
 Works with mouse (desktop) or touch (mobile browser) — both go through the
 Pointer Events API, single code path for both.
