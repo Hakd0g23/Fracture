@@ -33,9 +33,12 @@ The flagged mobile-mush risk (linework degrading at small cell sizes if overdone
 
 Verified visually via a real Playwright headless-Chromium pointer-drag + screenshot pass (script + PNGs kept only as scratchpad artifacts, not committed), at both a 375x800 mobile and a 1280x900 desktop viewport, at the three real render scales this code path actually produces (measured from `computeLayout`/`drawPieceGrid` in `src/main.js`, not assumed round numbers): the 18px-capped tray subcell (~14px chip after the gap inset), queue subcells (~36px for a mono shard, ~18px for a domino shard), and board/drag `cellSize` (~37px at 375px width, ~48px at 1280px width — `computeLayout`'s nominal 30px floor is not actually reachable at any real device viewport width, since it would require an inner width under ~264px). At every scale, including the smallest ~14px tray chip, the crystal look reads clearly (visible gradient, glint, and gap between adjacent shard cells) with no mush. Side-by-side same-shape/same-color shard-vs-regular-piece tray slots confirmed Style B's original distinctness guarantee still holds under the new fill. `node tests/core.test.mjs` still 21/21 (rendering-only change; no `core.js` logic touched).
 
+## Platform/engine decision — RESOLVED (2026-07-25, directly unblocks C)
+Capacitor-wrap the existing web codebase for iOS/Android; no port to a dedicated engine. Full decision trail — the two-specialist second opinion (web-strategist vs. game-engineer), the ads/IAP-placeholder crux they both independently converged on, and the user's resolution — lives in `design-doc-skeleton.md` Section 9, not duplicated here.
+
 ## Status
 - [x] B (flat geometric, distinct shard silhouettes) — done, independently re-verified.
 - [x] Colorblind palette audit + drop-preview non-color cue — done, independently re-verified.
-- [ ] Implementation-ownership pass (game-debugger) — dispatched, light-touch given no gameplay-logic surface touched.
+- [x] Implementation-ownership pass (game-debugger) — PASS, no bugs. One non-blocking nit logged (stale "no gradients" comment, `main.js:189-192`), deliberately left unfixed.
 - [x] A (glass/crystal identity pass) — done, implemented directly and Playwright-verified at all 3 real render scales across mobile + desktop viewports.
-- [ ] C (rendered sprites) — gated on both A (now done) and a platform/engine decision, still open.
+- [ ] C (rendered sprites) — platform/engine decision now resolved (Capacitor, no engine port), so C is no longer blocked by an undecided platform. Still not greenlit — building it remains its own scope/investment call, same as A required before dispatch.
