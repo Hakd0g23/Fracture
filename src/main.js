@@ -4,7 +4,8 @@
 // touch (mobile/tablet browsers) share one code path instead of two.
 
 import { createGame, placePiece, canPlaceAt, QUEUE_CAP, TRAY_BASE_SIZE } from './core.js';
-import { BOARD_SIZE } from './pieces.js';
+import { BOARD_SIZE, COLORS } from './pieces.js';
+import { ATLAS_TILE, ATLAS_VARIANTS, ATLAS_PATH } from './spriteAtlasConfig.js';
 
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
@@ -127,10 +128,23 @@ function computeLayout() {
   const height = trayY + TRAY_SLOT_H + GAP;
 
   layout = { width, height, gridX, gridY, gridW, gridH, queueY, trayY, trayCount, trayRowW };
-  canvas.width = width;
-  canvas.height = height;
+
+  // devicePixelRatio-aware backing store (see Style C comment above for why
+  // this codebase needed it added now, not before): CSS/layout size stays
+  // in logical pixels (canvas.style.width/height, and every draw() call
+  // below), but the actual pixel buffer is sized up by dpr and the context
+  // transform compensates, so raster sprites (and everything else) render
+  // at native device resolution instead of being upscaled blurry.
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
   canvas.style.width = width + 'px';
   canvas.style.height = height + 'px';
+  // Setting canvas.width/height resets all context state (transform,
+  // smoothing, etc.), so both must be reapplied every time this runs.
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
 }
 
 // ---- drag state ----
@@ -142,33 +156,73 @@ function shapeExtent(cells) {
   return { rows: maxR + 1, cols: maxC + 1 };
 }
 
-// ---- Style A: glass/crystal shard rendering (built on Style B) -------------
-// The legibility test from docs/art-direction.md: a shard and a same-shaped
-// regular piece must read as visually distinct BEFORE any further style
-// polish, not just via the "shard" text label (a functional fallback, not a
-// design solution -- removed in Style B now that the silhouette itself
-// carries the signal). Regular pieces stay solid inset rounded-rect blocks
-// that tile edge-to-edge. Shard cells keep Style B's irregular, angular,
-// gapped "chip" outline UNCHANGED (that geometry was independently
-// re-verified as distinct at all 3 real render scales -- board cell, tray
-// cell, and the smallest 18px tray subcell -- and there is no reason to
-// re-litigate a validated silhouette while adding a shading pass on top of
-// it). Style A's actual delta is the fill treatment: a gradient + clip-path
-// faceted glass/crystal look (radial base-tint gradient standing in for
-// depth, a translucent linear-gradient facet wedge for a lit-face glint, a
-// small specular highlight blob, and an internal crack-line fracture) in
-// place of B's flat two-tone split, tinted to the triggering piece's color
-// as before. The mobile-mush risk flagged when A was scoped (linework
-// degrading at ~30px cell size if overdone) is handled by SCALING DOWN
-// detail rather than adding more of it at small sizes: the facet wedge only
-// renders at chip size >= 10px and the internal crack line only at >= 16px,
-// so the smallest real chip (~14px, the 18px tray subcell case) gets a
-// clean two-gradient glass look with no extra linework layered on top of it
-// -- restraint at the smallest scale, not more detail crammed into it.
-// Verified by construction: a 1x1 shard_mono and a 1x1 mono piece still pass
-// the same cells/size into drawPieceGrid and produce deliberately different
-// silhouettes, not just a color/label difference (Style B's guarantee,
-// untouched by this pass).
+// ---- Style C: rendered mineral-chip sprites (supersedes Style A) -----------
+// docs/art-direction.md: Style C is greenlit, superseding Style A's
+// runtime-procedural glass/crystal fill. Regular pieces are UNCHANGED (still
+// solid inset rounded-rect blocks via the plain-fill branch of
+// drawPieceGrid below). Shard cells now blit a pre-baked raster sprite
+// instead of drawing gradients/clip-paths live every frame.
+//
+// Production path actually used (stated plainly, per the brief): this
+// environment has no Blender and no Meshy install (checked directly, not
+// assumed), so sprites are NOT modeled/rendered in a 3D tool. Instead they
+// are procedurally-rendered-then-rasterized: tools/sprite-bake/renderChip.mjs
+// draws a richer, more expensive version of a "mineral chip" (per-facet
+// gradients, a blurred ambient-occlusion edge, mineral-grain texture, a
+// branching crack network -- all affordable offline since they're paid once,
+// not per frame) into an offscreen canvas, run headlessly via
+// tools/sprite-bake/bake.mjs (Playwright/Chromium, the exact same
+// headless-canvas/screenshot technique already used to verify Style B and
+// Style A), and packed into one small PNG atlas at
+// assets/sprites/shard-atlas.png. Run `node tools/sprite-bake/bake.mjs` to
+// regenerate it (requires a Playwright Chromium install reachable on
+// NODE_PATH; see the build report for how this environment's install was
+// located -- no network fetch is required, an existing local install was
+// reused). This is a real, reproducible, commercially-clean production
+// path (no third-party asset licensing at all, since every pixel is
+// code-generated by this repo's own tool), not a placeholder.
+//
+// Layout/silhouette lineage: B's core idea -- an irregular angular polygon
+// silhouette, not a rounded rect, so shard cells read as distinct fragments
+// by OUTLINE alone -- carries forward, evolved (see renderChip.mjs) into a
+// more organic 9-vertex jittered-angle-and-radius outline rather than B's
+// clean 6-spoke hexagon. Each shard shape (mono/domino_h/domino_v) is still
+// composed the same way it always has been: drawPieceGrid loops per CELL
+// and blits one "chip" sprite per cell with a visible gap between adjacent
+// cells (so a domino shard never reads as one solid block) -- Style C did
+// not need to touch that composition logic, only what gets drawn per cell.
+//
+// Palette fidelity: each of the 7 colorblind-audited palette colors
+// (pieces.js COLORS) is baked directly into its own atlas column at the
+// exact hex value -- NOT approximated via a runtime multiply/tint blend --
+// specifically so the audited pairwise contrast guarantees are not put at
+// any risk of drifting under a lossy tint approximation. The only pixel
+// transform applied after rendering is a color-depth quantization pass
+// (bake.html) purely for PNG file size (DEFLATE compresses far fewer
+// distinct byte values much better); it reduces each channel to 20 levels,
+// which held up visually distinct-per-color and effectively
+// bandingless at every real render size checked (see build report).
+//
+// Mobile bundle size (a real cost now, per the Capacitor packaging
+// decision): the atlas is ATLAS_VARIANTS variants x 7 colors x ATLAS_TILE^2
+// px, ~436KB total (measured directly) -- kept lean by capping tile
+// resolution to what real on-screen chips actually need (see
+// spriteAtlasConfig.js) rather than an arbitrary high-res export, capping
+// variant count to what's ever simultaneously visible, and the
+// quantization pass above.
+//
+// devicePixelRatio: this codebase had ZERO devicePixelRatio handling before
+// this pass (checked directly -- canvas.width was always set equal to CSS
+// layout pixels, so the backing store was upscaled by the browser
+// compositor on any non-1x display). That was survivable for flat vector
+// fills but would visibly blur raster sprites, so computeLayout() below now
+// sizes the canvas backing store to `layout.width * devicePixelRatio` and
+// applies a matching ctx.setTransform so every existing draw call (all
+// written in CSS-pixel/logical coordinates) keeps working unchanged.
+// pointFromEvent() was updated to scale by `layout.width / rect.width`
+// instead of `canvas.width / rect.width`, since canvas.width is now a
+// physical-pixel quantity that no longer matches the logical coordinate
+// space the rest of the input/drag code operates in.
 
 function strHash(s) {
   let h = 0;
@@ -176,14 +230,47 @@ function strHash(s) {
   return h >>> 0;
 }
 
-function hash2(a, b) {
-  // Deterministic small-int hash -> [0,1). Pure function of (a,b), so a
-  // shard's jagged outline is stable across redraws instead of jittering
-  // every frame.
-  let h = (a * 374761393 + b * 668265263) ^ (a << 13);
-  h = Math.imul(h ^ (h >>> 15), 2246822519);
-  h = (h ^ (h >>> 13)) >>> 0;
-  return h / 4294967295;
+const COLOR_INDEX = new Map(COLORS.map((c, i) => [c, i]));
+
+const shardAtlas = new Image();
+let shardAtlasReady = false;
+shardAtlas.onload = () => { shardAtlasReady = true; draw(); };
+shardAtlas.onerror = () => {
+  // Missing/failed atlas load shouldn't hard-crash the game -- the
+  // per-cell fallback in drawShardSprite below keeps shards visually
+  // distinct (still not a rounded rect) even if the sprite never arrives.
+  console.error('Fracture: shard sprite atlas failed to load:', ATLAS_PATH);
+};
+shardAtlas.src = ATLAS_PATH;
+
+function drawShardSprite(cx, cy, size, color, seed) {
+  const colorIdx = COLOR_INDEX.get(color) ?? 0;
+  const variantIdx = ((seed % ATLAS_VARIANTS) + ATLAS_VARIANTS) % ATLAS_VARIANTS;
+  if (shardAtlasReady) {
+    const sx = colorIdx * ATLAS_TILE;
+    const sy = variantIdx * ATLAS_TILE;
+    ctx.drawImage(shardAtlas, sx, sy, ATLAS_TILE, ATLAS_TILE, cx - size / 2, cy - size / 2, size, size);
+    return;
+  }
+  // Pre-load-frame fallback only (real load is near-instant off a bundled
+  // local asset) -- a simple angular placeholder, still distinct in
+  // silhouette from a regular piece's rounded rect, so nothing reads as
+  // "broken" during the one or two frames before the atlas arrives.
+  const r = size / 2;
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - r);
+  ctx.lineTo(cx + r, cy - r * 0.2);
+  ctx.lineTo(cx + r * 0.6, cy + r);
+  ctx.lineTo(cx - r * 0.6, cy + r);
+  ctx.lineTo(cx - r, cy - r * 0.2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
 }
 
 function shadeColor(hex, amt) {
@@ -200,124 +287,6 @@ function shadeColor(hex, amt) {
   return `rgb(${r},${g},${b})`;
 }
 
-function drawShardChip(cx, cy, size, color, seed) {
-  // Irregular angular polygon (jittered hexagon spokes) inscribed in radius
-  // ~size/2 -- deliberately NOT a rounded rect, so the outline alone already
-  // differs from a regular piece cell at any size.
-  const spokes = 6;
-  const baseR = size / 2;
-  const pts = [];
-  for (let i = 0; i < spokes; i++) {
-    const angle = (Math.PI * 2 * i) / spokes - Math.PI / 2;
-    const jitter = 0.6 + hash2(seed, i) * 0.55; // 0.6..1.15 of baseR
-    pts.push([cx + Math.cos(angle) * baseR * jitter, cy + Math.sin(angle) * baseR * jitter]);
-  }
-  const tracePath = () => {
-    ctx.beginPath();
-    ctx.moveTo(pts[0][0], pts[0][1]);
-    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
-    ctx.closePath();
-  };
-
-  ctx.save();
-  tracePath();
-  ctx.clip();
-
-  // 1. Base glass-tint gradient: a radial gradient offset toward an
-  // upper-left "light source" so the chip reads as a translucent tinted
-  // gem with depth (lighter near the light, deepening toward the opposite
-  // corner) instead of a flat fill. Always drawn, at every size -- this is
-  // the one layer that alone has to carry the glass look at the smallest
-  // real scale.
-  const lightX = cx - baseR * 0.35, lightY = cy - baseR * 0.45;
-  const baseGrad = ctx.createRadialGradient(lightX, lightY, Math.max(0.5, baseR * 0.05), cx, cy, baseR * 1.5);
-  baseGrad.addColorStop(0, shadeColor(color, 0.5));
-  baseGrad.addColorStop(0.45, color);
-  baseGrad.addColorStop(1, shadeColor(color, -0.45));
-  ctx.fillStyle = baseGrad;
-  ctx.fillRect(cx - baseR, cy - baseR, baseR * 2, baseR * 2);
-
-  // 2. Faceted highlight wedge: a translucent white linear-gradient wedge
-  // (angle randomized per cell via the same deterministic seed as the
-  // outline jitter) standing in for one lit facet of a cut crystal. Skipped
-  // below chipSize 10 -- at that point a distinct wedge just adds noise, not
-  // signal, so we fall back to the base gradient alone.
-  if (size >= 10) {
-    const splitAngle = hash2(seed, 99) * Math.PI * 2;
-    const wedgeX = cx + Math.cos(splitAngle) * baseR;
-    const wedgeY = cy + Math.sin(splitAngle) * baseR;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(wedgeX, wedgeY);
-    ctx.lineTo(cx + Math.cos(splitAngle + Math.PI * 0.9) * baseR * 1.6, cy + Math.sin(splitAngle + Math.PI * 0.9) * baseR * 1.6);
-    ctx.closePath();
-    const facetGrad = ctx.createLinearGradient(cx, cy, wedgeX, wedgeY);
-    facetGrad.addColorStop(0, 'rgba(255,255,255,0.4)');
-    facetGrad.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = facetGrad;
-    ctx.fill();
-  }
-
-  // 3. Specular glint: a small soft radial blob (white fading to
-  // transparent), cheap regardless of size and the strongest single "glass,
-  // not flat plastic" cue at any scale, including the smallest chips.
-  const glintR = Math.max(1.5, baseR * 0.35);
-  const glintX = cx - baseR * 0.3, glintY = cy - baseR * 0.35;
-  const glintGrad = ctx.createRadialGradient(glintX, glintY, 0, glintX, glintY, glintR);
-  glintGrad.addColorStop(0, 'rgba(255,255,255,0.55)');
-  glintGrad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = glintGrad;
-  ctx.beginPath();
-  ctx.arc(glintX, glintY, glintR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // 4. Internal crack-line fracture (the "cracked" half of "cracked/angular
-  // glass silhouette"): a two-segment jagged line from one outline vertex
-  // through a jittered midpoint to the roughly opposite vertex, paired with
-  // a 1px-offset dark companion stroke to read as a glass edge catching
-  // light on one side and shadow on the other. Gated at chipSize >= 16 --
-  // this is exactly the extra linework the original A brief flagged as a
-  // mush risk at mobile scale, so it is the first thing dropped as chips
-  // shrink rather than being scaled down to illegibility.
-  if (size >= 16) {
-    const iA = 0;
-    const iB = Math.floor(spokes / 2);
-    const midX = cx + (hash2(seed, 50) - 0.5) * baseR * 0.6;
-    const midY = cy + (hash2(seed, 51) - 0.5) * baseR * 0.6;
-    ctx.lineWidth = Math.max(0.75, size * 0.04);
-    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-    ctx.beginPath();
-    ctx.moveTo(pts[iA][0], pts[iA][1]);
-    ctx.lineTo(midX, midY);
-    ctx.lineTo(pts[iB][0], pts[iB][1]);
-    ctx.stroke();
-    ctx.lineWidth = Math.max(0.5, size * 0.025);
-    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
-    ctx.beginPath();
-    ctx.moveTo(pts[iA][0] + 1, pts[iA][1] + 1);
-    ctx.lineTo(midX + 1, midY + 1);
-    ctx.lineTo(pts[iB][0] + 1, pts[iB][1] + 1);
-    ctx.stroke();
-  }
-
-  ctx.restore();
-
-  // Outer edge: dark contact stroke for silhouette definition (unchanged
-  // from B), plus a thin translucent rim highlight on top for a glass-edge
-  // catch-light -- skipped below chipSize 12 alongside the other small-size
-  // guards.
-  tracePath();
-  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  if (size >= 12) {
-    tracePath();
-    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
-    ctx.lineWidth = 0.75;
-    ctx.stroke();
-  }
-}
-
 function drawPieceGrid(cells, color, ox, oy, subcell, isShard, shapeId) {
   const shapeSeed = strHash(shapeId || '');
   for (const [r, c] of cells) {
@@ -330,7 +299,7 @@ function drawPieceGrid(cells, color, ox, oy, subcell, isShard, shapeId) {
       const gap = Math.max(3, subcell * 0.22);
       const chipSize = Math.max(4, subcell - gap);
       const cellSeed = (shapeSeed + r * 131 + c * 977) | 0;
-      drawShardChip(x + subcell / 2, y + subcell / 2, chipSize, color, cellSeed);
+      drawShardSprite(x + subcell / 2, y + subcell / 2, chipSize, color, cellSeed);
     } else {
       ctx.fillStyle = color;
       roundRect(x + 1, y + 1, subcell - 2, subcell - 2, 4);
@@ -527,8 +496,13 @@ function dragTargetCell() {
 
 function pointFromEvent(e) {
   const rect = canvas.getBoundingClientRect();
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
+  // Scale by the LOGICAL layout size, not canvas.width/height -- those are
+  // now physical-pixel (devicePixelRatio-scaled) quantities, while every
+  // other coordinate in this file (layout.gridX, drag.x, etc.) is in the
+  // same logical/CSS-pixel space as layout.width. Using canvas.width here
+  // would silently multiply every pointer coordinate by dpr again.
+  const scaleX = layout.width / rect.width;
+  const scaleY = layout.height / rect.height;
   return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
 }
 
