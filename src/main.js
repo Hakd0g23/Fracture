@@ -537,6 +537,17 @@ canvas.addEventListener('pointermove', (e) => {
 
 function endDrag(e) {
   if (!drag) return;
+  // Re-sample the pointer position from the pointerup event itself rather
+  // than trusting drag.x/y left over from the last pointermove. If a
+  // resize/orientation-change fires between the last move and this release
+  // with no intervening pointer movement, layout/rect/DPR may have changed
+  // and the stale coordinates would compute a drop cell against the old
+  // geometry. See issue #1.
+  if (e && typeof e.clientX === 'number') {
+    const p = pointFromEvent(e);
+    drag.x = p.x;
+    drag.y = p.y;
+  }
   const target = dragTargetCell();
   const trayIndex = drag.trayIndex;
   drag = null;

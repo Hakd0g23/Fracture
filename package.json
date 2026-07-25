@@ -1,0 +1,12 @@
+{
+  "name": "fracture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests/core.test.mjs",
+    "bake-sprites": "node tools/sprite-bake/bake.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.0"
+  }
+}
