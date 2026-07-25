@@ -142,20 +142,33 @@ function shapeExtent(cells) {
   return { rows: maxR + 1, cols: maxC + 1 };
 }
 
-// ---- Style B: flat geometric shard rendering -------------------------------
+// ---- Style A: glass/crystal shard rendering (built on Style B) -------------
 // The legibility test from docs/art-direction.md: a shard and a same-shaped
 // regular piece must read as visually distinct BEFORE any further style
 // polish, not just via the "shard" text label (a functional fallback, not a
-// design solution -- removed below now that the silhouette itself carries
-// the signal). Regular pieces stay solid inset rounded-rect blocks that tile
-// edge-to-edge. Shard cells render instead as small, irregular, angular
-// "chip" facets with a visible gap between adjacent cells (even for a
-// 2-cell domino shard, so it never reads as one contiguous block) and a
-// two-tone flat facet split -- angular + gapped + two-tone -- with no
-// gradients, so it stays "flat geometric" (the gradient/glass faceted look
-// is reserved for style A). Verified by construction: a 1x1 shard_mono and a
-// 1x1 mono piece pass the same cells/size into drawPieceGrid and produce
-// deliberately different silhouettes, not just a color/label difference.
+// design solution -- removed in Style B now that the silhouette itself
+// carries the signal). Regular pieces stay solid inset rounded-rect blocks
+// that tile edge-to-edge. Shard cells keep Style B's irregular, angular,
+// gapped "chip" outline UNCHANGED (that geometry was independently
+// re-verified as distinct at all 3 real render scales -- board cell, tray
+// cell, and the smallest 18px tray subcell -- and there is no reason to
+// re-litigate a validated silhouette while adding a shading pass on top of
+// it). Style A's actual delta is the fill treatment: a gradient + clip-path
+// faceted glass/crystal look (radial base-tint gradient standing in for
+// depth, a translucent linear-gradient facet wedge for a lit-face glint, a
+// small specular highlight blob, and an internal crack-line fracture) in
+// place of B's flat two-tone split, tinted to the triggering piece's color
+// as before. The mobile-mush risk flagged when A was scoped (linework
+// degrading at ~30px cell size if overdone) is handled by SCALING DOWN
+// detail rather than adding more of it at small sizes: the facet wedge only
+// renders at chip size >= 10px and the internal crack line only at >= 16px,
+// so the smallest real chip (~14px, the 18px tray subcell case) gets a
+// clean two-gradient glass look with no extra linework layered on top of it
+// -- restraint at the smallest scale, not more detail crammed into it.
+// Verified by construction: a 1x1 shard_mono and a 1x1 mono piece still pass
+// the same cells/size into drawPieceGrid and produce deliberately different
+// silhouettes, not just a color/label difference (Style B's guarantee,
+// untouched by this pass).
 
 function strHash(s) {
   let h = 0;
@@ -206,28 +219,103 @@ function drawShardChip(cx, cy, size, color, seed) {
     ctx.closePath();
   };
 
-  // Two-tone flat facet split (no gradient): a darker half and a lighter
-  // half of the same base color, clipped to the jagged outline so the split
-  // never bleeds outside the chip.
   ctx.save();
   tracePath();
   ctx.clip();
-  ctx.fillStyle = shadeColor(color, -0.22);
+
+  // 1. Base glass-tint gradient: a radial gradient offset toward an
+  // upper-left "light source" so the chip reads as a translucent tinted
+  // gem with depth (lighter near the light, deepening toward the opposite
+  // corner) instead of a flat fill. Always drawn, at every size -- this is
+  // the one layer that alone has to carry the glass look at the smallest
+  // real scale.
+  const lightX = cx - baseR * 0.35, lightY = cy - baseR * 0.45;
+  const baseGrad = ctx.createRadialGradient(lightX, lightY, Math.max(0.5, baseR * 0.05), cx, cy, baseR * 1.5);
+  baseGrad.addColorStop(0, shadeColor(color, 0.5));
+  baseGrad.addColorStop(0.45, color);
+  baseGrad.addColorStop(1, shadeColor(color, -0.45));
+  ctx.fillStyle = baseGrad;
   ctx.fillRect(cx - baseR, cy - baseR, baseR * 2, baseR * 2);
-  ctx.fillStyle = shadeColor(color, 0.22);
-  const splitAngle = hash2(seed, 99) * Math.PI * 2;
+
+  // 2. Faceted highlight wedge: a translucent white linear-gradient wedge
+  // (angle randomized per cell via the same deterministic seed as the
+  // outline jitter) standing in for one lit facet of a cut crystal. Skipped
+  // below chipSize 10 -- at that point a distinct wedge just adds noise, not
+  // signal, so we fall back to the base gradient alone.
+  if (size >= 10) {
+    const splitAngle = hash2(seed, 99) * Math.PI * 2;
+    const wedgeX = cx + Math.cos(splitAngle) * baseR;
+    const wedgeY = cy + Math.sin(splitAngle) * baseR;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(wedgeX, wedgeY);
+    ctx.lineTo(cx + Math.cos(splitAngle + Math.PI * 0.9) * baseR * 1.6, cy + Math.sin(splitAngle + Math.PI * 0.9) * baseR * 1.6);
+    ctx.closePath();
+    const facetGrad = ctx.createLinearGradient(cx, cy, wedgeX, wedgeY);
+    facetGrad.addColorStop(0, 'rgba(255,255,255,0.4)');
+    facetGrad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = facetGrad;
+    ctx.fill();
+  }
+
+  // 3. Specular glint: a small soft radial blob (white fading to
+  // transparent), cheap regardless of size and the strongest single "glass,
+  // not flat plastic" cue at any scale, including the smallest chips.
+  const glintR = Math.max(1.5, baseR * 0.35);
+  const glintX = cx - baseR * 0.3, glintY = cy - baseR * 0.35;
+  const glintGrad = ctx.createRadialGradient(glintX, glintY, 0, glintX, glintY, glintR);
+  glintGrad.addColorStop(0, 'rgba(255,255,255,0.55)');
+  glintGrad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glintGrad;
   ctx.beginPath();
-  ctx.moveTo(cx, cy);
-  ctx.lineTo(cx + Math.cos(splitAngle) * baseR * 1.6, cy + Math.sin(splitAngle) * baseR * 1.6);
-  ctx.lineTo(cx + Math.cos(splitAngle + Math.PI * 0.9) * baseR * 1.6, cy + Math.sin(splitAngle + Math.PI * 0.9) * baseR * 1.6);
-  ctx.closePath();
+  ctx.arc(glintX, glintY, glintR, 0, Math.PI * 2);
   ctx.fill();
+
+  // 4. Internal crack-line fracture (the "cracked" half of "cracked/angular
+  // glass silhouette"): a two-segment jagged line from one outline vertex
+  // through a jittered midpoint to the roughly opposite vertex, paired with
+  // a 1px-offset dark companion stroke to read as a glass edge catching
+  // light on one side and shadow on the other. Gated at chipSize >= 16 --
+  // this is exactly the extra linework the original A brief flagged as a
+  // mush risk at mobile scale, so it is the first thing dropped as chips
+  // shrink rather than being scaled down to illegibility.
+  if (size >= 16) {
+    const iA = 0;
+    const iB = Math.floor(spokes / 2);
+    const midX = cx + (hash2(seed, 50) - 0.5) * baseR * 0.6;
+    const midY = cy + (hash2(seed, 51) - 0.5) * baseR * 0.6;
+    ctx.lineWidth = Math.max(0.75, size * 0.04);
+    ctx.strokeStyle = 'rgba(255,255,255,0.28)';
+    ctx.beginPath();
+    ctx.moveTo(pts[iA][0], pts[iA][1]);
+    ctx.lineTo(midX, midY);
+    ctx.lineTo(pts[iB][0], pts[iB][1]);
+    ctx.stroke();
+    ctx.lineWidth = Math.max(0.5, size * 0.025);
+    ctx.strokeStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath();
+    ctx.moveTo(pts[iA][0] + 1, pts[iA][1] + 1);
+    ctx.lineTo(midX + 1, midY + 1);
+    ctx.lineTo(pts[iB][0] + 1, pts[iB][1] + 1);
+    ctx.stroke();
+  }
+
   ctx.restore();
 
+  // Outer edge: dark contact stroke for silhouette definition (unchanged
+  // from B), plus a thin translucent rim highlight on top for a glass-edge
+  // catch-light -- skipped below chipSize 12 alongside the other small-size
+  // guards.
   tracePath();
-  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
   ctx.lineWidth = 1;
   ctx.stroke();
+  if (size >= 12) {
+    tracePath();
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = 0.75;
+    ctx.stroke();
+  }
 }
 
 function drawPieceGrid(cells, color, ox, oy, subcell, isShard, shapeId) {
