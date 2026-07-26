@@ -692,6 +692,11 @@ function draw() {
       // back to the tray row itself so the callout never silently vanishes.
       const anchor = overflowCalloutAnchor || { x: trayStartX, y: layout.trayY };
       drawCallout(callout.text, anchor.x, anchor.y - 28);
+    } else if (callout.type === 'wave') {
+      // Endless-mode difficulty wave telegraph — anchored above the board
+      // grid, centered, same non-blocking pulse pattern as the onboarding
+      // callouts above.
+      drawCallout(callout.text, layout.gridX + (BOARD_SIZE * cellSize) / 2, layout.gridY - 12, 'center');
     }
   }
   ctx.restore(); // pairs with the ctx.save()/translate(shake) at the top of draw()

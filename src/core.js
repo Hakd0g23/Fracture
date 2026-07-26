@@ -148,12 +148,64 @@ export const ONBOARDING_MAX_SUPPRESSED_REFILLS = 10;
 export const FIRST_SHARD_CALLOUT_TEXT = "Shard saved! It'll pop back into your tray soon.";
 export const FIRST_OVERFLOW_CALLOUT_TEXT = "Queue's full! This shard's in your tray now.";
 
+// ---- Endless-mode difficulty waves -----------------------------------------
+// Session-length difficulty axis, orthogonal to the shard/queue system's own
+// skill-gated pressure (game-engineer review, see build report): waves only
+// ever reweight which piece SHAPES get dealt (reusing the same
+// EASY_SHAPES-restriction pattern Section 5b already uses for onboarding).
+// They never touch shard generation, queue insertion, board size, or the
+// ship-blocking safety rule, so they can't perturb the parameters that
+// safety rule's "unreachable at current SHAPES weights" verdict depends on.
+//
+// Gated on state.onboarding.totalClears (a stable, already-tracked counter)
+// rather than score, since score is explicitly a placeholder model (see
+// SCORE_PER_* comments above) and shouldn't be load-bearing for a difficulty
+// threshold.
+export const WAVE_START_AFTER_CLEARS = 18; // past the Section 5b onboarding window (ONBOARDING_ELIGIBLE_AFTER_CLEARS=4 + its ~5-8 clear script window)
+export const WAVE_INTERVAL_CLEARS = 18;    // clears between each wave bump
+export const WAVE_MAX_TIER = 4;            // plateaus here — an endless ramp past legibility reads as grind, not skill
+
+// Integer tier for a given clear count (0 = no waves active yet).
+export function waveTierForClears(totalClears) {
+  if (totalClears < WAVE_START_AFTER_CLEARS) return 0;
+  return Math.min(WAVE_MAX_TIER, Math.floor((totalClears - WAVE_START_AFTER_CLEARS) / WAVE_INTERVAL_CLEARS) + 1);
+}
+
+// Fractional progress toward WAVE_MAX_TIER, used to blend shape weights
+// smoothly rather than snapping the whole pool at each threshold (avoids a
+// legibility cliff right at the boundary).
+function waveDifficultyFraction(totalClears) {
+  return waveTierForClears(totalClears) / WAVE_MAX_TIER;
+}
+
+export function waveCalloutText(tier) {
+  return `Wave ${tier}! Trickier pieces from here.`;
+}
+
 // "Bias early tray draws toward easy clears" — restrict the weighted draw
 // pool to small/simple shapes (mono/domino/tromino/square2/corner) while
 // firstExposureComplete is false. Shape-set membership, not a doc-specified
 // list — a gray-box implementation decision like pieces.js's own shape set.
 export const EASY_SHAPE_IDS = new Set(['mono', 'domino_h', 'domino_v', 'tromino_h', 'tromino_v', 'square2', 'corner']);
 const EASY_SHAPES = SHAPES.filter((s) => EASY_SHAPE_IDS.has(s.id));
+
+// Wave difficulty reweighting (see WAVE_* constants above) — reuses
+// EASY_SHAPE_IDS as the "taper down" set, mirrors it with a "ramp up" set.
+const WAVE_HARD_IDS = new Set(['tetromino_h', 'tetromino_v', 'penta_h', 'penta_v', 'square3', 'L1', 'L2', 'L3', 'L4', 'T', 'Tv', 'S', 'Z']);
+
+// SHAPES reweighted for the current wave tier: easy shapes taper down (never
+// below half their base weight, so they don't vanish from the pool
+// entirely), hard shapes ramp up. frac===0 returns SHAPES itself unchanged
+// (no allocation on the hot path before waves start).
+function waveWeightedShapes(totalClears) {
+  const frac = waveDifficultyFraction(totalClears);
+  if (frac === 0) return SHAPES;
+  return SHAPES.map((s) => {
+    if (EASY_SHAPE_IDS.has(s.id)) return { ...s, weight: Math.max(s.weight * 0.5, s.weight * (1 - 0.6 * frac)) };
+    if (WAVE_HARD_IDS.has(s.id)) return { ...s, weight: s.weight * (1 + 1.5 * frac) };
+    return s;
+  });
+}
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -342,7 +394,9 @@ function planOnboardingArm(state, suppressDrain) {
 }
 
 function newRandomPiece(state) {
-  const pool = state.firstExposureComplete === false ? EASY_SHAPES : SHAPES;
+  const pool = state.firstExposureComplete === false
+    ? EASY_SHAPES
+    : waveWeightedShapes(state.onboarding ? state.onboarding.totalClears : 0);
   const shape = weightedPick(pool, state.rng);
   const color = pick(COLORS, state.rng);
   return { shape: shape.cells, shapeId: shape.id, color, isShard: false };
@@ -406,6 +460,7 @@ export function createGame(seed = Date.now(), opts = {}) {
       // round's worth of play, not one instant.
       suppressedThisRound: false,
       firstShardCalloutFired,
+      waveTier: 0, // current endless-mode difficulty wave (see WAVE_* constants)
     },
   };
   for (let i = 0; i < TRAY_BASE_SIZE; i++) state.tray.push(newRandomPiece(state));
@@ -670,7 +725,14 @@ export function placePiece(state, trayIndex, r, c) {
     clearLines(state.board, rows, cols);
     state.score += lineCount * SCORE_PER_LINE_CLEAR;
     logEvent(state, `Cleared ${lineCount} line(s) (rows:[${rows}] cols:[${cols}]) with a ${piece.color} ${piece.shapeId}.`);
-    if (state.onboarding) state.onboarding.totalClears += 1;
+    if (state.onboarding) {
+      state.onboarding.totalClears += 1;
+      const newTier = waveTierForClears(state.onboarding.totalClears);
+      if (newTier > state.onboarding.waveTier) {
+        state.onboarding.waveTier = newTier;
+        state.pendingCallouts.push({ type: 'wave', tier: newTier, text: waveCalloutText(newTier) });
+      }
+    }
 
     if (piece.isScriptedCombo && lineCount >= 3) {
       // Guard rail (design doc Section 5b / playtest-findings.md items 3-4):
