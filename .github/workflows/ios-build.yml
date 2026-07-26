@@ -25,6 +25,11 @@ jobs:
 
       - run: npm ci
 
+      - name: Populate web assets (webDir, gitignored)
+        run: |
+          mkdir -p www
+          cp -R index.html src assets www/
+
       - run: npx cap sync ios
 
       - name: Install CocoaPods
