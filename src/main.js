@@ -393,7 +393,17 @@ function drawCenterBursts() {
     const scale = t < 0.2 ? 0.6 + 0.4 * (t / 0.2) : 1;
     const alpha = t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
     const isPerfect = b.kind === 'perfect';
-    const baseSize = isPerfect ? 30 : Math.min(18 + b.level * 2, 30);
+    let baseSize = isPerfect ? 44 : Math.min(22 + b.level * 5, 56);
+
+    // Longer/bigger strings can outgrow the board at high combo levels, so
+    // measure at the target size and shrink to fit rather than clipping.
+    ctx.font = `${baseSize}px "Bangers", -apple-system, sans-serif`;
+    const maxWidth = BOARD_SIZE * cellSize * 0.92;
+    const measured = ctx.measureText(b.text).width;
+    if (measured > maxWidth) {
+      baseSize *= maxWidth / measured;
+      ctx.font = `${baseSize}px "Bangers", -apple-system, sans-serif`;
+    }
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -401,9 +411,15 @@ function drawCenterBursts() {
     ctx.scale(scale, scale);
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = `800 ${baseSize}px -apple-system, sans-serif`;
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.font = `${baseSize}px "Bangers", -apple-system, sans-serif`;
+    // Anime SFX look: heavy white outline first, then a thin dark inline for
+    // contrast, so the text pops against both light and dark board tiles.
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = baseSize * 0.22;
+    ctx.strokeStyle = '#ffffff';
+    ctx.strokeText(b.text, 0, 0);
+    ctx.lineWidth = baseSize * 0.06;
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
     ctx.strokeText(b.text, 0, 0);
     const hue = isPerfect ? '#ffd54a' : COLORS[(b.level - 2) % COLORS.length];
     ctx.fillStyle = hue;
