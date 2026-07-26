@@ -450,6 +450,11 @@ export function createGame(seed = Date.now(), opts = {}) {
     score: 0,
     comboStreak: 0, // consecutive clearing placements; resets on a non-clearing placement
     gameOver: false,
+    // One-shot save against death-by-plain-misplacement (docs/playtest-findings.md:
+    // naive players die in 17-41 turns before the shard system ever engages).
+    // Flat, not scaling with wave tier or onboarding state -- deliberately kept
+    // orthogonal to the shard/tray-growth safety valves elsewhere in this file.
+    mercyChargesRemaining: 1,
     rng: mulberry32(seed >>> 0),
     log: [],
     turn: 0,
@@ -669,12 +674,104 @@ function maybeRefillTray(state) {
   state.tray = fresh;
 }
 
-function checkGameOver(state) {
-  const anyFits = state.tray.some((slot) => slot != null && findAnyPlacement(state.board, slot.shape) != null);
-  if (state.tray.some((slot) => slot != null) && !anyFits) {
-    state.gameOver = true;
-    logEvent(state, 'GAME OVER: no tray piece fits anywhere on the board.');
+// Smallest EASY_SHAPES shape that fits somewhere on `board` right now, or
+// null if the board has zero empty cells (degenerate/unreachable -- even a
+// mono can't land). Not clear-avoiding (see MERCY_MIN_FILL_PERCENT comment
+// below for why that layer doesn't matter): whether the mercy piece itself
+// completes a line isn't the lever that controls rescue magnitude.
+function findMercyShape(board) {
+  const bySize = [...EASY_SHAPES].sort((a, b) => a.cells.length - b.cells.length);
+  for (const shape of bySize) {
+    if (findAnyPlacement(board, shape.cells) != null) return shape;
   }
+  return null;
+}
+
+// Size (in cells) of the largest 4-connected contiguous empty region on
+// `board`. This is the fragmentation metric mercy eligibility is gated on
+// (see MERCY_MAX_OPEN_REGION below) -- raw fill% (an earlier, reverted
+// iteration) doesn't distinguish "genuinely cramped everywhere" from
+// "plenty of open space, just not shaped like this tray," and sim13 showed
+// those two situations both happen at the same ~49-65% fill across every
+// bot skill level. Largest-contiguous-empty-region does distinguish them.
+export function largestEmptyRegionSize(board) {
+  const seen = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(false));
+  let largest = 0;
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (board[r][c] != null || seen[r][c]) continue;
+      let size = 0;
+      const stack = [[r, c]];
+      seen[r][c] = true;
+      while (stack.length) {
+        const [rr, cc] = stack.pop();
+        size++;
+        for (const [nr, nc] of [[rr - 1, cc], [rr + 1, cc], [rr, cc - 1], [rr, cc + 1]]) {
+          if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+          if (board[nr][nc] != null || seen[nr][nc]) continue;
+          seen[nr][nc] = true;
+          stack.push([nr, nc]);
+        }
+      }
+      if (size > largest) largest = size;
+    }
+  }
+  return largest;
+}
+
+// Gate, verified via tools/playtest-sim/sim13_mercy_piece_verify.mjs: mercy
+// firing for a greedy-clearer bot on a board with plenty of open space
+// elsewhere (just not shaped like its current tray) nearly doubled its total
+// game length (968->1691 avg turns) by unsticking a merely LOCALLY-blocked
+// board that the bot's ordinary next few draws could resume normal, lengthy
+// play from -- not a genuine top-out. Two earlier iterations didn't fix this:
+// constraining the mercy piece's own shape (the cascade comes from ANY legal
+// placement unsticking the board, not the mercy piece's own combo) and
+// gating on raw fill% (all four bot profiles' dead-ends cluster at the same
+// 49-65% fill regardless of skill, so there's no separate high-fill
+// "genuine top-out" population to reserve mercy for).
+//
+// Gating on fragmentation instead targets the actual mechanism: if the
+// largest open region left on the board is still bigger than this cap, the
+// board isn't really stuck -- there's real room elsewhere, just a tray/shape
+// mismatch, and a real player's next few random draws would likely resolve
+// it same as the bot's did. Below the cap, there's nowhere meaningful left
+// regardless of what shape shows up next -- that's the genuine top-out mercy
+// exists to catch.
+//
+// Calibrated against sim13_mercy_piece_verify.mjs (300 games/profile): at 6,
+// greedy-clearer/combo-hoarder (skilled) lifetime shift is negligible
+// (967.9->974.5 and 210.3->213.2 avg turns, <1.5% change -- no windfall),
+// while naive/random (weak) still get a real, much smaller than uncapped,
+// assist (40.0->41.1 and 17.9->19.6 avg turns) at a lower, more plausible
+// engagement rate (16.7%/37.7% of games, vs. 100% uncapped) -- consistent
+// with "occasionally saves a genuine top-out," not "saves every game."
+export const MERCY_MAX_OPEN_REGION = 6;
+
+export function checkGameOver(state) {
+  const anyFits = state.tray.some((slot) => slot != null && findAnyPlacement(state.board, slot.shape) != null);
+  if (!state.tray.some((slot) => slot != null) || anyFits) return;
+
+  if (state.mercyChargesRemaining > 0 && largestEmptyRegionSize(state.board) <= MERCY_MAX_OPEN_REGION) {
+    const mercyShape = findMercyShape(state.board);
+    if (mercyShape) {
+      const slotIndex = state.tray.findIndex((slot) => slot != null);
+      state.mercyChargesRemaining -= 1;
+      state.tray[slotIndex] = {
+        shape: mercyShape.cells,
+        shapeId: mercyShape.id,
+        color: pick(COLORS, state.rng),
+        isShard: false,
+        isMercy: true,
+      };
+      logEvent(state, `MERCY: no tray piece fit anywhere (largest open region ${largestEmptyRegionSize(state.board)} cells) -- swapped tray slot ${slotIndex} (was unplaceable) for a guaranteed-fit ${mercyShape.id} (charges remaining: ${state.mercyChargesRemaining}).`);
+      state.pendingCallouts.push({ type: 'mercy', text: 'One more move -- a piece just cleared a path for you.' });
+      return;
+    }
+  }
+
+  state.gameOver = true;
+  logEvent(state, 'GAME OVER: no tray piece fits anywhere on the board.');
 }
 
 /**

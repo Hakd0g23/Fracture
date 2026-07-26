@@ -11,6 +11,7 @@
 import assert from 'node:assert/strict';
 import {
   createGame, placePiece, canPlaceAt, findAnyPlacement, resolveGeneratedShard,
+  checkGameOver,
   QUEUE_CAP, TRAY_BASE_SIZE, SCORE_PER_SHARD_CELL_AUTOCONVERT,
   ONBOARDING_SAFE_QUEUE_LEVEL, ONBOARDING_ELIGIBLE_AFTER_CLEARS,
   ONBOARDING_MAX_SUPPRESSED_REFILLS, EASY_SHAPE_IDS,
@@ -538,6 +539,57 @@ test('whole-field clear: a placement that empties the entire board awards the fl
   assert.equal(s.board.every((row) => row.every((cell) => cell == null)), true, 'board should be fully empty after this clear');
   assert.equal(s.score, scoreBefore + 1 /* SCORE_PER_CELL_PLACED */ + 10 /* SCORE_PER_LINE_CLEAR */ + SCORE_WHOLE_FIELD_CLEAR_BONUS,
     'whole-field clear should add the flat bonus on top of normal clear scoring (no combo bonus yet -- this is streak=1)');
+});
+
+// Board with one empty cell per row/col, diagonally placed so no two empty
+// cells are edge-adjacent: no domino/tromino/etc. fits anywhere, but a mono
+// always fits at any of the 8 gaps. Deliberately does NOT go through
+// placePiece (any placement into a gap here would complete that row+col and
+// trigger a clear) -- checkGameOver is exercised directly against a
+// hand-built board+tray, same as this file's other hand-built states.
+function isolatedGapBoard() {
+  const board = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill({ color: '#000' }));
+  for (let r = 0; r < BOARD_SIZE; r++) board[r] = board[r].slice();
+  for (let r = 0; r < BOARD_SIZE; r++) board[r][r] = null;
+  return board;
+}
+
+const unplaceableDomino = { shape: [[0, 0], [0, 1]], shapeId: 'domino_h', color: '#fff', isShard: false };
+
+test('mercy piece: saves the game once when no tray piece fits anywhere', () => {
+  const s = freshState();
+  s.board = isolatedGapBoard();
+  s.tray = [{ ...unplaceableDomino }, { ...unplaceableDomino }, null];
+
+  checkGameOver(s);
+
+  assert.equal(s.gameOver, false, 'mercy charge should prevent game-over on the first dead end');
+  assert.equal(s.mercyChargesRemaining, 0, 'the single mercy charge should be consumed');
+  const swapped = s.tray.find((slot) => slot && slot.isMercy);
+  assert.ok(swapped, 'one tray slot should have been swapped for a mercy piece');
+  assert.equal(swapped.shapeId, 'mono', 'mono is the smallest EASY_SHAPES shape and should be picked first');
+  assert.equal(findAnyPlacement(s.board, swapped.shape) != null, true, 'the mercy piece must actually be placeable');
+});
+
+test('mercy piece: does not fire, and is not consumed, when a tray piece already fits', () => {
+  const s = freshState();
+  s.tray = [{ shape: [[0, 0]], shapeId: 'mono', color: '#fff', isShard: false }, null, null];
+
+  checkGameOver(s);
+
+  assert.equal(s.gameOver, false);
+  assert.equal(s.mercyChargesRemaining, 1, 'charge must not be spent when the tray already has a valid move');
+});
+
+test('mercy piece: once the charge is spent, a second dead end is a real game-over', () => {
+  const s = freshState();
+  s.board = isolatedGapBoard();
+  s.mercyChargesRemaining = 0;
+  s.tray = [{ ...unplaceableDomino }, { ...unplaceableDomino }, null];
+
+  checkGameOver(s);
+
+  assert.equal(s.gameOver, true, 'with no charges left, a genuine dead end must still end the game');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);
