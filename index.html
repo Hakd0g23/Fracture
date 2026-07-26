@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Fracture</title>
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-9315070030896287" crossorigin="anonymous"></script>
 <style>
   /* ---- theming ----------------------------------------------------------
      CSS custom properties drive both the DOM chrome below and the canvas
@@ -119,6 +120,11 @@
     border-radius: 8px; padding: 12px; align-self: stretch;
   }
   #sidebar h2 { margin: 0 0 8px; font-size: 15px; color: var(--fg); }
+  #adSlot {
+    margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--panel-border);
+    min-height: 600px; display: flex; align-items: center; justify-content: center;
+    font-size: 11px; color: var(--muted);
+  }
   #leaderboardList { list-style: none; margin: 0; padding: 0; font-size: 14px; color: var(--fg); }
   #leaderboardList li { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; }
   #leaderboardList li:nth-child(odd) { background: var(--row-alt); }
@@ -184,8 +190,15 @@
   <aside id="sidebar">
     <h2>Top 10 Scores</h2>
     <ol id="leaderboardList"></ol>
+    <div id="adSlot">
+      <ins class="adsbygoogle"
+           style="display:inline-block;width:160px;height:600px"
+           data-ad-client="ca-pub-9315070030896287"
+           data-ad-slot="5339631161"></ins>
+    </div>
   </aside>
 </div>
+<script>(adsbygoogle = window.adsbygoogle || []).push({});</script>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
