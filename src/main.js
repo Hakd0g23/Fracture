@@ -7,6 +7,7 @@ import { createGame, placePiece, canPlaceAt, QUEUE_CAP, TRAY_BASE_SIZE } from '.
 import { BOARD_SIZE, COLORS } from './pieces.js';
 import { ATLAS_TILE, ATLAS_VARIANTS, ATLAS_PATH } from './spriteAtlasConfig.js';
 import { playLineClear, playShardScatter, playGameOver, unlockAudio } from './audio.js';
+import { fetchTopScores, submitScore } from './leaderboard.js';
 
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
@@ -18,6 +19,11 @@ const finalScoreEl = document.getElementById('finalScore');
 const bestDeltaEl = document.getElementById('bestDelta');
 const newGameBtn = document.getElementById('newGameBtn');
 const restartBtn = document.getElementById('restartBtn');
+const nameInput = document.getElementById('nameInput');
+const submitScoreBtn = document.getElementById('submitScoreBtn');
+const submitStatusEl = document.getElementById('submitStatus');
+const leaderboardListEl = document.getElementById('leaderboardList');
+const LS_KEY_PLAYER_NAME = 'fracture.playerName';
 
 // ---- dev-only debug log panel ----------------------------------------------
 // The raw engine event log (state.log) is a debugging aid, not a shipped
@@ -51,6 +57,13 @@ function readBestScore() {
 }
 function writeBestScore(v) {
   try { localStorage.setItem(LS_KEY_BEST_SCORE, String(v)); } catch { /* ignore (private mode, etc.) */ }
+}
+
+function readPlayerName() {
+  try { return localStorage.getItem(LS_KEY_PLAYER_NAME) || ''; } catch { return ''; }
+}
+function writePlayerName(name) {
+  try { localStorage.setItem(LS_KEY_PLAYER_NAME, name); } catch { /* ignore (private mode, etc.) */ }
 }
 
 let bestScore = readBestScore();
@@ -524,6 +537,7 @@ function draw() {
         ctx.fillText(ok ? '✓' : '✕', cx, cy + 1);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'alphabetic';
+        ctx.font = '11px -apple-system, sans-serif';
       }
     }
   }
@@ -749,6 +763,8 @@ function newGame() {
   bestDeltaEl.classList.remove('new-best');
   scoreVal.textContent = '0';
   bestVal.textContent = bestScore;
+  submitStatusEl.textContent = '';
+  submitScoreBtn.disabled = false;
   computeLayout();
   draw();
 }
@@ -756,6 +772,49 @@ function newGame() {
 newGameBtn.addEventListener('click', newGame);
 restartBtn.addEventListener('click', newGame);
 window.addEventListener('resize', () => { computeLayout(); draw(); });
+
+// ---- online leaderboard (Supabase) ------------------------------------
+// leaderboard.js is DOM-free and network-agnostic; all UI/state wiring
+// lives here, matching the persistence-ownership split main.js already
+// uses for onboarding flags and bestScore.
+nameInput.value = readPlayerName();
+
+async function renderLeaderboard() {
+  leaderboardListEl.replaceChildren();
+  const rows = await fetchTopScores(10);
+  if (!rows) {
+    const li = document.createElement('li');
+    li.textContent = 'Leaderboard unavailable';
+    leaderboardListEl.appendChild(li);
+    return;
+  }
+  for (const row of rows) {
+    const li = document.createElement('li');
+    const name = document.createElement('span');
+    name.textContent = row.name;
+    const score = document.createElement('span');
+    score.textContent = row.score;
+    li.append(name, score);
+    leaderboardListEl.appendChild(li);
+  }
+}
+
+renderLeaderboard(); // sidebar is always visible, so populate it on load
+
+submitScoreBtn.addEventListener('click', async () => {
+  const name = nameInput.value.trim();
+  if (!name) {
+    submitStatusEl.textContent = 'Enter a name first.';
+    return;
+  }
+  writePlayerName(name);
+  submitScoreBtn.disabled = true;
+  submitStatusEl.textContent = 'Submitting…';
+  const ok = await submitScore(name, state.score);
+  submitStatusEl.textContent = ok ? 'Submitted!' : 'Could not submit score.';
+  if (!ok) submitScoreBtn.disabled = false;
+  else renderLeaderboard(); // reflect the new score immediately
+});
 
 // QA/automation hook only -- inert for normal play, lets an external test
 // script (e.g. Playwright) reach past RNG to drive specific scenarios

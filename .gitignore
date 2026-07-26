@@ -5,3 +5,6 @@ dist/
 
 # Local Netlify folder
 .netlify
+
+# Supabase credentials (see src/config.example.js for the template)
+src/config.js
