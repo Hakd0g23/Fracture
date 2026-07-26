@@ -6,7 +6,7 @@
 import { createGame, placePiece, canPlaceAt, mulberry32, QUEUE_CAP, TRAY_BASE_SIZE, WAVE_MAX_TIER, waveCalloutText } from './core.js';
 import { BOARD_SIZE, COLORS } from './pieces.js';
 import { ATLAS_TILE, ATLAS_VARIANTS, ATLAS_PATH } from './spriteAtlasConfig.js';
-import { playLineClear, playShardScatter, playGameOver, unlockAudio, setWaveTier, startBgm, setSfxVolume, getSfxVolume, setBgmVolume, getBgmVolume } from './audio.js';
+import { playLineClear, playShardScatter, playGameOver, playComboVoice, playPerfectClearVoice, unlockAudio, setWaveTier, startBgm, setSfxVolume, getSfxVolume, setBgmVolume, getBgmVolume } from './audio.js';
 import { fetchTopScores, submitScore } from './leaderboard.js';
 
 const canvas = document.getElementById('stage');
@@ -944,8 +944,10 @@ function endDrag(e) {
         if (res.lineCount >= 3) triggerShake(6);
         if (res.wholeFieldClear) {
           triggerCenterBurst('PERFECT CLEAR!', 'perfect', res.comboStreak);
+          playPerfectClearVoice();
         } else if (res.comboStreak >= 2) {
           triggerCenterBurst(comboAffirmationText(res.comboStreak), 'combo', res.comboStreak);
+          playComboVoice(res.comboStreak);
         }
       }
       refreshChrome();

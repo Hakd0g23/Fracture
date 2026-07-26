@@ -204,6 +204,30 @@ export function playGameOver() {
   playBell(260, 0.9, 0.22, 0.3);
 }
 
+// Combo/perfect-clear "voice": since we can't use recorded VO without
+// breaking the no-external-asset-files rule (see file header), the "Nice!
+// x2 Combo" / "PERFECT CLEAR!" banners get an excited procedural stand-in
+// instead of silence -- a short rising arpeggio, same bell voice as
+// playLineClear, that adds more notes and climbs higher/faster as the
+// streak grows so a big combo *sounds* like a bigger deal, not just looks
+// like one.
+const COMBO_ARP_RATIOS = [1.0, 1.26, 1.5, 1.89, 2.0]; // major-ish steps, capped at an octave
+export function playComboVoice(streak) {
+  const notes = Math.max(1, Math.min(streak - 1, COMBO_ARP_RATIOS.length));
+  const baseFreq = 520 * (1 + Math.min(streak, 6) * 0.03); // pitches up slightly with streak too
+  const gap = Math.max(0.045, 0.09 - streak * 0.006); // notes rattle off faster on bigger combos
+  for (let i = 0; i < notes; i++) {
+    playBell(baseFreq * COMBO_ARP_RATIOS[i], 0.32, 0.16, i * gap);
+  }
+}
+
+// Perfect clear: the full arpeggio plus a shimmering high octave doubling,
+// the "biggest reward" sound in the game.
+export function playPerfectClearVoice() {
+  playComboVoice(COMBO_ARP_RATIOS.length + 1);
+  playBell(520 * 4, 0.5, 0.1, 0.25);
+}
+
 // ---- background music --------------------------------------------------
 // A slow generative ambient loop, same synthesis toolkit (inharmonic sine
 // partials) as the sfx bell voice but soft/long-decay instead of a short
