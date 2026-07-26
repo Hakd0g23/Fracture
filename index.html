@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>Fracture — gray-box prototype</title>
+<title>Fracture</title>
 <style>
   :root { color-scheme: dark; }
   html, body {
@@ -35,13 +35,20 @@
   }
   #overlay.show { display: flex; }
   #overlay h2 { margin: 0; font-size: 22px; }
+  #bestDelta { font-size: 13px; color: #7a7e8c; }
+  #bestDelta.new-best { color: #f1c40f; font-weight: 600; }
   #legend { font-size: 11px; color: #7a7e8c; width: 100%; text-align: left; line-height: 1.5; }
+  /* #log (debug event panel) is dev-only — see main.js DEBUG_LOG_PANEL flag.
+     Hidden by default so shipped builds never show raw engine log lines to
+     playtesters; only unhidden at runtime via ?debug=1, never by default. */
   #log {
+    display: none;
     width: 100%; height: 140px; overflow-y: auto; background: #16171c;
     border: 1px solid #2c2f38; border-radius: 6px; padding: 8px 10px;
     font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px;
     color: #9aa0ae; line-height: 1.5;
   }
+  #log.show { display: block; }
   #log .warn { color: #f1c40f; }
   #log .over { color: #e74c3c; }
 </style>
@@ -49,8 +56,8 @@
 <body>
 <div id="app">
   <header>
-    <h1>Fracture <small>gray-box prototype</small></h1>
-    <div id="scoreLine">Score: <b id="scoreVal">0</b></div>
+    <h1>Fracture</h1>
+    <div id="scoreLine">Score: <b id="scoreVal">0</b> &nbsp; Best: <b id="bestVal">0</b></div>
     <button id="newGameBtn">New Game</button>
   </header>
 
@@ -59,6 +66,7 @@
     <div id="overlay">
       <h2>Game Over</h2>
       <div id="finalScore"></div>
+      <div id="bestDelta"></div>
       <button id="restartBtn">Play Again</button>
     </div>
   </div>

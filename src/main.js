@@ -6,15 +6,26 @@
 import { createGame, placePiece, canPlaceAt, QUEUE_CAP, TRAY_BASE_SIZE } from './core.js';
 import { BOARD_SIZE, COLORS } from './pieces.js';
 import { ATLAS_TILE, ATLAS_VARIANTS, ATLAS_PATH } from './spriteAtlasConfig.js';
+import { playLineClear, playShardScatter, playGameOver, unlockAudio } from './audio.js';
 
 const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
 const scoreVal = document.getElementById('scoreVal');
+const bestVal = document.getElementById('bestVal');
 const logEl = document.getElementById('log');
 const overlay = document.getElementById('overlay');
 const finalScoreEl = document.getElementById('finalScore');
+const bestDeltaEl = document.getElementById('bestDelta');
 const newGameBtn = document.getElementById('newGameBtn');
 const restartBtn = document.getElementById('restartBtn');
+
+// ---- dev-only debug log panel ----------------------------------------------
+// The raw engine event log (state.log) is a debugging aid, not a shipped
+// player-facing feature -- gated behind an explicit ?debug=1 query flag so
+// playtesters never see it by default, but it stays reachable for real
+// debugging without a code change (just add the query param).
+const DEBUG_LOG_PANEL = new URLSearchParams(location.search).has('debug');
+if (DEBUG_LOG_PANEL && logEl) logEl.classList.add('show');
 
 // ---- Section 5b: persisted onboarding flags --------------------------------
 // core.js is DOM-free and can't read/write localStorage itself, so main.js
@@ -22,6 +33,7 @@ const restartBtn = document.getElementById('restartBtn');
 // whenever core.js reports a change (see persistOnboardingFlags below).
 const LS_KEY_EXPOSURE = 'fracture.firstExposureComplete';
 const LS_KEY_SHARD_CALLOUT = 'fracture.firstShardCalloutShown';
+const LS_KEY_BEST_SCORE = 'fracture.bestScore';
 
 function readBoolFlag(key) {
   try { return localStorage.getItem(key) === 'true'; } catch { return false; }
@@ -29,6 +41,23 @@ function readBoolFlag(key) {
 function writeBoolFlag(key, value) {
   try { localStorage.setItem(key, value ? 'true' : 'false'); } catch { /* ignore (private mode, etc.) */ }
 }
+
+function readBestScore() {
+  try {
+    const raw = localStorage.getItem(LS_KEY_BEST_SCORE);
+    const n = raw == null ? 0 : parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  } catch { return 0; }
+}
+function writeBestScore(v) {
+  try { localStorage.setItem(LS_KEY_BEST_SCORE, String(v)); } catch { /* ignore (private mode, etc.) */ }
+}
+
+let bestScore = readBestScore();
+// True only for the single game in which the best score was actually beaten
+// -- drives the game-over overlay's "New Best!" vs "X short of best" text
+// (task 5), reset every newGame().
+let beatBestThisGame = false;
 
 function newGameState() {
   return createGame(undefined, {
@@ -75,6 +104,66 @@ function startCalloutTicker() {
     }
   };
   requestAnimationFrame(tick);
+}
+
+// ---- clear-moment juice (flash/pulse + screen shake) -----------------------
+// Pure canvas-transform code, no asset pipeline: ctx.translate jitter for
+// shake, globalCompositeOperation:'lighter' for flash/pulse. Flash tint
+// reuses the existing colorblind-audited COLORS palette (pieces.js) rather
+// than raw white/yellow.
+const FLASH_DURATION_MS = 320;
+const LAND_FLASH_DURATION_MS = 180;
+const SHAKE_DURATION_MS = 260;
+let boardFlashes = []; // { r, c, color, expiresAt, startedAt, kind: 'clear'|'land' }
+let shake = null; // { startedAt, duration, magnitude }
+let effectsTickerRunning = false;
+
+function startEffectsTicker() {
+  if (effectsTickerRunning) return;
+  effectsTickerRunning = true;
+  const tick = () => {
+    const now = performance.now();
+    boardFlashes = boardFlashes.filter((f) => f.expiresAt > now);
+    if (shake && now > shake.startedAt + shake.duration) shake = null;
+    draw();
+    if (boardFlashes.length > 0 || shake) {
+      requestAnimationFrame(tick);
+    } else {
+      effectsTickerRunning = false;
+    }
+  };
+  requestAnimationFrame(tick);
+}
+
+function triggerClearFlash(rows, cols, color) {
+  const now = performance.now();
+  const expiresAt = now + FLASH_DURATION_MS;
+  for (const r of rows) for (let c = 0; c < BOARD_SIZE; c++) boardFlashes.push({ r, c, color, expiresAt, startedAt: now, kind: 'clear' });
+  for (const c of cols) for (let r = 0; r < BOARD_SIZE; r++) boardFlashes.push({ r, c, color, expiresAt, startedAt: now, kind: 'clear' });
+  startEffectsTicker();
+}
+
+function triggerLandFlash(cells, r0, c0, color) {
+  const now = performance.now();
+  const expiresAt = now + LAND_FLASH_DURATION_MS;
+  for (const [dr, dc] of cells) boardFlashes.push({ r: r0 + dr, c: c0 + dc, color, expiresAt, startedAt: now, kind: 'land' });
+  startEffectsTicker();
+}
+
+function triggerShake(magnitude) {
+  shake = { startedAt: performance.now(), duration: SHAKE_DURATION_MS, magnitude };
+  startEffectsTicker();
+}
+
+function currentShakeOffset() {
+  if (!shake) return { x: 0, y: 0 };
+  const now = performance.now();
+  const t = (now - shake.startedAt) / shake.duration;
+  if (t >= 1) return { x: 0, y: 0 };
+  const falloff = 1 - t; // linear decay to 0
+  const angle = Math.random() * Math.PI * 2;
+  const r = shake.magnitude * falloff;
+  return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
 }
 
 function drawCallout(text, anchorX, anchorY, align = 'left') {
@@ -331,7 +420,14 @@ function roundRect(x, y, w, h, r) {
 }
 
 function draw() {
+  ctx.save();
   ctx.clearRect(0, 0, layout.width, layout.height);
+  // Screen shake: jitter the whole draw via ctx.translate, applied only to
+  // the board/piece drawing below (restored before UI chrome would matter --
+  // in practice the whole draw() call is small enough that shaking
+  // everything, including the queue/tray rows, reads fine and is simplest).
+  const shakeOffset = currentShakeOffset();
+  ctx.translate(shakeOffset.x, shakeOffset.y);
 
   // --- shard queue row ---
   ctx.fillStyle = '#7a7e8c';
@@ -368,6 +464,27 @@ function draw() {
       ctx.fillRect(x, y, cellSize, cellSize);
       ctx.strokeRect(x, y, cellSize, cellSize);
     }
+  }
+
+  // --- clear-moment juice: flash/pulse on cleared row/column and shard
+  // landing cells (task 4). 'lighter' composite blends an additive glow of
+  // the palette-tinted color on top, fading out over the flash's lifetime --
+  // never a raw white/yellow, always the COLORS-palette hue passed in.
+  if (boardFlashes.length > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const now = performance.now();
+    for (const f of boardFlashes) {
+      const life = (f.expiresAt - now) / (f.expiresAt - f.startedAt);
+      if (life <= 0) continue;
+      const x = layout.gridX + f.c * cellSize;
+      const y = layout.gridY + f.r * cellSize;
+      ctx.globalAlpha = Math.max(0, Math.min(1, life)) * (f.kind === 'clear' ? 0.75 : 0.55);
+      ctx.fillStyle = f.color;
+      ctx.fillRect(x, y, cellSize, cellSize);
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   // --- drop preview ---
@@ -481,6 +598,7 @@ function draw() {
       drawCallout(callout.text, anchor.x, anchor.y - 28);
     }
   }
+  ctx.restore(); // pairs with the ctx.save()/translate(shake) at the top of draw()
 }
 
 function dragTargetCell() {
@@ -517,6 +635,7 @@ function trayIndexAt(x, y) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
+  unlockAudio(); // must run from a real user-gesture handler; safe to call every time
   if (state.gameOver) return;
   const p = pointFromEvent(e);
   const idx = trayIndexAt(p.x, p.y);
@@ -550,10 +669,23 @@ function endDrag(e) {
   }
   const target = dragTargetCell();
   const trayIndex = drag.trayIndex;
+  const piece = drag.piece;
   drag = null;
   if (target) {
     const res = placePiece(state, trayIndex, target.r, target.c);
-    if (res.ok) refreshChrome();
+    if (res.ok) {
+      // Landing flash for the piece that just landed on the board -- do this
+      // BEFORE refreshChrome/clear-line flash so a placement that both lands
+      // and immediately clears shows both effects, land first.
+      triggerLandFlash(piece.shape, target.r, target.c, piece.color);
+      if (res.lineCount > 0) {
+        triggerClearFlash(res.rows, res.cols, piece.color);
+        playLineClear(res.lineCount);
+        if (res.shardCount > 0) playShardScatter(res.shardCount);
+        if (res.lineCount >= 3) triggerShake(6);
+      }
+      refreshChrome();
+    }
   }
   draw();
 }
@@ -563,19 +695,42 @@ canvas.addEventListener('pointercancel', () => { drag = null; draw(); });
 
 function refreshChrome() {
   scoreVal.textContent = state.score;
-  // append only new log lines
-  for (; lastLogLen < state.log.length; lastLogLen++) {
-    const line = state.log[lastLogLen];
-    const div = document.createElement('div');
-    if (line.startsWith('OVERFLOW')) div.className = 'warn';
-    if (line.startsWith('GAME OVER')) div.className = 'over';
-    div.textContent = line;
-    logEl.appendChild(div);
+  // append only new log lines (only bother touching the DOM panel if it's
+  // actually visible -- dev-only, see DEBUG_LOG_PANEL above)
+  if (DEBUG_LOG_PANEL) {
+    for (; lastLogLen < state.log.length; lastLogLen++) {
+      const line = state.log[lastLogLen];
+      const div = document.createElement('div');
+      if (line.startsWith('OVERFLOW')) div.className = 'warn';
+      if (line.startsWith('GAME OVER')) div.className = 'over';
+      div.textContent = line;
+      logEl.appendChild(div);
+    }
+    logEl.scrollTop = logEl.scrollHeight;
+  } else {
+    lastLogLen = state.log.length;
   }
-  logEl.scrollTop = logEl.scrollHeight;
+  // Best-score persistence (task 3): update as soon as the running score
+  // beats it, not only at game-over, so "Best: X" in the header stays live
+  // during play too, matching how "Score: X" already updates live.
+  if (state.score > bestScore) {
+    bestScore = state.score;
+    writeBestScore(bestScore);
+    beatBestThisGame = true;
+  }
+  bestVal.textContent = bestScore;
   if (state.gameOver) {
     finalScoreEl.textContent = `Final score: ${state.score}`;
+    if (beatBestThisGame) {
+      bestDeltaEl.textContent = 'New Best!';
+      bestDeltaEl.classList.add('new-best');
+    } else {
+      const short = bestScore - state.score;
+      bestDeltaEl.textContent = short > 0 ? `${short} short of best (${bestScore})` : `Best: ${bestScore}`;
+      bestDeltaEl.classList.remove('new-best');
+    }
     overlay.classList.add('show');
+    playGameOver();
   }
   ingestPendingCallouts(state);
   persistOnboardingFlags(state);
@@ -585,10 +740,15 @@ function refreshChrome() {
 function newGame() {
   state = newGameState();
   activeCallouts = [];
+  boardFlashes = [];
+  shake = null;
+  beatBestThisGame = false;
   lastLogLen = 0;
   logEl.replaceChildren();
   overlay.classList.remove('show');
+  bestDeltaEl.classList.remove('new-best');
   scoreVal.textContent = '0';
+  bestVal.textContent = bestScore;
   computeLayout();
   draw();
 }
@@ -618,5 +778,6 @@ window.__fractureDebug = {
   },
 };
 
+bestVal.textContent = bestScore;
 computeLayout();
 draw();

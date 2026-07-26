@@ -715,7 +715,11 @@ export function placePiece(state, trayIndex, r, c) {
   // Step 4: game-over check, last.
   checkGameOver(state);
 
-  return { ok: true };
+  // Additive fields only (existing callers/tests only ever assert `.ok`) --
+  // gives main.js enough structured info to drive sound/juice effects
+  // (line-clear chime + flash/shake, shard-scatter sound) without re-parsing
+  // state.log strings or re-deriving line count from board diffing.
+  return { ok: true, lineCount, rows, cols, shardCount: lineCount > 0 ? shardCountForClear(lineCount) : 0 };
 }
 
 export function canPlaceAnySlot(state) {
