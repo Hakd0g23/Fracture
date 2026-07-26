@@ -74,10 +74,10 @@ function predictedCell(rect, layout, cellSize, ext, clientX, clientY) {
   const x = (clientX - rect.left) * scaleX;
   const y = (clientY - rect.top) * scaleY;
   // NOTE: dragTargetCell() in src/main.js resolves the drop cell against the
-  // real pointer position with no vertical lift -- the touch-only visual lift
-  // (TOUCH_VISUAL_LIFT) affects rendering of the dragged piece only, not hit
-  // testing (see src/main.js dragTargetCell/dragVisualLift). This test drives
-  // page.mouse, i.e. pointerType 'mouse', which never gets a lift anyway.
+  // same lifted position the piece is rendered at (see TOUCH_VISUAL_LIFT /
+  // dragVisualLift), but that lift only applies for pointerType 'touch'.
+  // This test drives page.mouse, i.e. pointerType 'mouse', which never gets
+  // a lift, so the formula below (no lift) still matches.
   const ox = x - (ext.cols * cellSize) / 2;
   const oy = y - (ext.rows * cellSize) / 2;
   const c = Math.round((ox - layout.gridX) / cellSize);

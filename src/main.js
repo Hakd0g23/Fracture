@@ -491,9 +491,10 @@ let drag = null; // { trayIndex, piece, x, y, pointerType }
 // the player's finger/thumb (reported occlusion bug). Only applied for
 // touch input -- mouse/pen already has the cursor tip itself as a visible
 // reference point, so lifting it there would just look wrong/disconnected.
-// Hit-testing (dragTargetCell) deliberately does NOT use this lift -- it
-// stays keyed to the real finger position so placement still feels like
-// "put it under your finger," not "put it under the ghost above your finger."
+// Hit-testing (dragTargetCell) uses this same lift so placement is resolved
+// against the visible piece the player is aiming with, not the finger
+// hidden underneath it -- avoids the piece landing somewhere other than
+// where it visibly appeared to be.
 const TOUCH_VISUAL_LIFT = 90;
 
 function dragVisualLift() {
@@ -877,12 +878,11 @@ function dragTargetCell() {
   if (!drag) return null;
   const ext = shapeExtent(drag.piece.shape);
   const s = cellSize;
-  // Deliberately keyed to the real pointer position (drag.x/y), NOT the
-  // visually-lifted render position used above -- see TOUCH_VISUAL_LIFT.
-  // The piece renders above the finger so it's visible, but placement is
-  // still resolved against where the finger actually is.
+  // Keyed to the same lifted position the piece is rendered at (see
+  // dragVisualLift/TOUCH_VISUAL_LIFT) so placement matches what the player
+  // sees, not the finger underneath it -- players aim by the visible piece.
   const ox = drag.x - (ext.cols * s) / 2;
-  const oy = drag.y - (ext.rows * s) / 2;
+  const oy = drag.y - (ext.rows * s) / 2 - dragVisualLift();
   const c = Math.round((ox - layout.gridX) / s);
   const r = Math.round((oy - layout.gridY) / s);
   return { r, c };
