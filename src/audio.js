@@ -218,6 +218,24 @@ export function playComboVoice(streak) {
   const gap = Math.max(0.045, 0.09 - streak * 0.006); // notes rattle off faster on bigger combos
   for (let i = 0; i < notes; i++) {
     playBell(baseFreq * COMBO_ARP_RATIOS[i], 0.32, 0.16, i * gap);
+    // Sparkle layer: a quiet high-octave bell + a bright noise tick riding
+    // just behind each arpeggio note -- this is what reads as "festive"
+    // (glitter/chime) rather than a plain single-voice arpeggio. Scales up
+    // with streak so a bigger combo gets noticeably more sparkle, not just
+    // a higher pitch.
+    const sparkleAmount = Math.min(streak, 6) / 6;
+    playBell(baseFreq * COMBO_ARP_RATIOS[i] * 4.0, 0.18, 0.05 + 0.05 * sparkleAmount, i * gap + 0.02);
+    playNoiseTick(5200 + i * 340, 0.07, 0.05 + 0.05 * sparkleAmount, i * gap + 0.015);
+  }
+  // Big combos (4+) get a final "ta-da" shimmer flourish -- a quick upward
+  // flurry of high sparkle ticks after the arpeggio finishes, distinct from
+  // the per-note sparkle above so a big streak has a clear capstone moment.
+  if (streak >= 4) {
+    const flourishStart = notes * gap + 0.1;
+    for (let i = 0; i < 5; i++) {
+      playNoiseTick(6000 + i * 500, 0.09, 0.09, flourishStart + i * 0.03);
+      playBell(baseFreq * (3.0 + i * 0.5), 0.22, 0.07, flourishStart + i * 0.03);
+    }
   }
 }
 
@@ -296,4 +314,29 @@ export function stopBgm() {
 // repeatedly.
 export function unlockAudio() {
   getCtx();
+}
+
+// ---- tab visibility recovery --------------------------------------------
+// Browsers auto-suspend the AudioContext (and heavily throttle setTimeout)
+// when a tab is backgrounded, to save power. getCtx() already resumes the
+// context lazily on the next sfx call, so one-shot sfx recover on their own
+// the moment the player interacts again. But bgm doesn't wait for a gesture:
+// its own look-ahead scheduler (scheduleBgmNotes' setTimeout loop) stalls
+// while hidden, and `bgmNextNoteAt` is left far in the past. Left alone,
+// returning to the tab would either play nothing (context stuck suspended,
+// nothing ever calls getCtx() again) or dump a stale backlog of notes all
+// at once (bgmNextNoteAt catching up instantly). This listener explicitly
+// resumes the context and re-anchors the schedule to "now" on return.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    const ac = getCtx(); // resumes if suspended
+    if (!ac) return;
+    if (bgmTimer) {
+      // Re-anchor instead of leaving stale timestamps -- otherwise the
+      // lookahead loop in scheduleBgmNotes would see bgmNextNoteAt far in
+      // the past and fire a burst of overdue notes back-to-back.
+      bgmNextNoteAt = ac.currentTime + 0.2;
+    }
+  });
 }
