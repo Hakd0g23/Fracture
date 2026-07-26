@@ -1,0 +1,47 @@
+name: iOS build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "ios/**"
+      - "src/**"
+      - "assets/**"
+      - "index.html"
+      - "capacitor.config.json"
+      - "package.json"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build-simulator:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci
+
+      - run: npx cap sync ios
+
+      - name: Install CocoaPods
+        run: |
+          cd ios/App
+          pod install
+
+      - name: Build for iOS Simulator
+        run: |
+          cd ios/App
+          xcodebuild \
+            -workspace App.xcworkspace \
+            -scheme App \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -configuration Debug \
+            build
+
+      - name: Run unit tests (no engine dependency)
+        run: node tests/core.test.mjs
