@@ -73,8 +73,13 @@ function predictedCell(rect, layout, cellSize, ext, clientX, clientY) {
   const scaleY = layout.height / rect.height;
   const x = (clientX - rect.left) * scaleX;
   const y = (clientY - rect.top) * scaleY;
+  // NOTE: dragTargetCell() in src/main.js resolves the drop cell against the
+  // real pointer position with no vertical lift -- the touch-only visual lift
+  // (TOUCH_VISUAL_LIFT) affects rendering of the dragged piece only, not hit
+  // testing (see src/main.js dragTargetCell/dragVisualLift). This test drives
+  // page.mouse, i.e. pointerType 'mouse', which never gets a lift anyway.
   const ox = x - (ext.cols * cellSize) / 2;
-  const oy = y - (ext.rows * cellSize) / 2 - 40;
+  const oy = y - (ext.rows * cellSize) / 2;
   const c = Math.round((ox - layout.gridX) / cellSize);
   const r = Math.round((oy - layout.gridY) / cellSize);
   return { r, c };
@@ -121,7 +126,7 @@ async function main() {
     const targetA = { r: 2, c: 2 };
     const { layout: layoutA, cellSize: sA, ext, rect: rectA } = layoutInfoA;
     const dragXA = layoutA.gridX + targetA.c * sA + (ext.cols * sA) / 2;
-    const dragYA = layoutA.gridY + targetA.r * sA + (ext.rows * sA) / 2 + 40;
+    const dragYA = layoutA.gridY + targetA.r * sA + (ext.rows * sA) / 2;
     // Invert pointFromEvent's scaling (scale is ~1 here since rect.width ===
     // layout.width, but do it properly so this doesn't silently assume that).
     const clientX = rectA.left + dragXA * (rectA.width / layoutA.width);

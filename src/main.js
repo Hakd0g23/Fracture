@@ -484,7 +484,21 @@ function computeLayout() {
 }
 
 // ---- drag state ----
-let drag = null; // { trayIndex, piece, x, y }
+let drag = null; // { trayIndex, piece, x, y, pointerType }
+
+// How far (in logical px) to lift the dragged piece's VISUAL rendering above
+// the actual pointer position, so a touch-dragged piece isn't hidden behind
+// the player's finger/thumb (reported occlusion bug). Only applied for
+// touch input -- mouse/pen already has the cursor tip itself as a visible
+// reference point, so lifting it there would just look wrong/disconnected.
+// Hit-testing (dragTargetCell) deliberately does NOT use this lift -- it
+// stays keyed to the real finger position so placement still feels like
+// "put it under your finger," not "put it under the ghost above your finger."
+const TOUCH_VISUAL_LIFT = 90;
+
+function dragVisualLift() {
+  return drag && drag.pointerType === 'touch' ? TOUCH_VISUAL_LIFT : 0;
+}
 
 function shapeExtent(cells) {
   let maxR = 0, maxC = 0;
@@ -826,7 +840,7 @@ function draw() {
     const ext = shapeExtent(drag.piece.shape);
     const s = cellSize;
     const ox = drag.x - (ext.cols * s) / 2;
-    const oy = drag.y - (ext.rows * s) / 2 - 40; // lifted above finger/cursor
+    const oy = drag.y - (ext.rows * s) / 2 - dragVisualLift(); // lifted above finger on touch
     ctx.globalAlpha = 0.95;
     drawPieceGrid(drag.piece.shape, drag.piece.color, ox, oy, s, drag.piece.isShard, drag.piece.shapeId);
     ctx.globalAlpha = 1;
@@ -863,8 +877,12 @@ function dragTargetCell() {
   if (!drag) return null;
   const ext = shapeExtent(drag.piece.shape);
   const s = cellSize;
+  // Deliberately keyed to the real pointer position (drag.x/y), NOT the
+  // visually-lifted render position used above -- see TOUCH_VISUAL_LIFT.
+  // The piece renders above the finger so it's visible, but placement is
+  // still resolved against where the finger actually is.
   const ox = drag.x - (ext.cols * s) / 2;
-  const oy = drag.y - (ext.rows * s) / 2 - 40;
+  const oy = drag.y - (ext.rows * s) / 2;
   const c = Math.round((ox - layout.gridX) / s);
   const r = Math.round((oy - layout.gridY) / s);
   return { r, c };
@@ -899,7 +917,7 @@ canvas.addEventListener('pointerdown', (e) => {
   const p = pointFromEvent(e);
   const idx = trayIndexAt(p.x, p.y);
   if (idx >= 0 && state.tray[idx]) {
-    drag = { trayIndex: idx, piece: state.tray[idx], x: p.x, y: p.y };
+    drag = { trayIndex: idx, piece: state.tray[idx], x: p.x, y: p.y, pointerType: e.pointerType };
     canvas.setPointerCapture(e.pointerId);
     draw();
   }
