@@ -840,7 +840,7 @@ export function placePiece(state, trayIndex, r, c) {
     clearLines(state.board, rows, cols);
     state.score += lineCount * SCORE_PER_LINE_CLEAR;
 
-    state.comboStreak += 1;
+    state.comboStreak += lineCount;
     comboStreak = state.comboStreak;
     if (state.comboStreak > 1) {
       const comboBonus = state.comboStreak * SCORE_PER_COMBO_STEP;
