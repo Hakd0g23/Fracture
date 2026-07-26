@@ -28,3 +28,6 @@ Explicitly out of scope (per game-engineer, unchanged): settings menu, pause, me
 ## Carried-forward open items (pre-existing)
 - iOS real-device QA — CI build green, real-hardware confirmation deferred per user direction.
 - Real-hardware (non-emulator) confirmation of Android touch-drag/orientation-mid-drag — currently passing on healthy emulator only.
+
+## Open task — web-developer
+- **[ ] Mobile ad layout fix (deferred until AdSense is reintroduced).** `#adSlot`'s fixed 160x600 skyscraper `<ins>` sits directly under the leaderboard in `#sidebar` (`flex: 0 0 220px`) with no media queries anywhere for `#app`/`#sidebar`/`#adSlot`. On mobile viewports the sidebar wraps below `#main` and the fixed 160x600 ad dominates the viewport height. Fix: below a ~700px breakpoint, swap to a responsive AdSense unit (`data-ad-format="auto"` + `data-full-width-responsive="true"`, or a 320x50 banner) instead of repositioning it beside the leaderboard (too narrow on phones). Keep ad placement below the leaderboard, just resize for mobile. AdSense containers are currently removed from the build (see below) — re-add them as part of this task.
