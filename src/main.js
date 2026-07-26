@@ -183,9 +183,9 @@ const LS_KEY_GAME_STATE = 'fracture.gameState';
 
 function saveGameState(s) {
   try {
-    const { board, tray, shardQueue, score, gameOver, log, turn, firstExposureComplete, pendingCallouts, onboarding } = s;
+    const { board, tray, shardQueue, score, comboStreak, gameOver, log, turn, firstExposureComplete, pendingCallouts, onboarding } = s;
     localStorage.setItem(LS_KEY_GAME_STATE, JSON.stringify({
-      board, tray, shardQueue, score, gameOver, log, turn, firstExposureComplete, pendingCallouts, onboarding,
+      board, tray, shardQueue, score, comboStreak, gameOver, log, turn, firstExposureComplete, pendingCallouts, onboarding,
     }));
   } catch { /* ignore (private mode, etc.) */ }
 }
@@ -203,6 +203,7 @@ function tryLoadGameState() {
     if (!Array.isArray(saved.board) || !Array.isArray(saved.tray) || !Array.isArray(saved.shardQueue)) return null;
     if (typeof saved.score !== 'number' || typeof saved.gameOver !== 'boolean') return null;
     if (saved.gameOver) return null; // a finished run isn't resumable
+    if (typeof saved.comboStreak !== 'number') saved.comboStreak = 0; // older saves predate combos
     saved.rng = mulberry32(Date.now());
     return saved;
   } catch {
@@ -304,6 +305,111 @@ function currentShakeOffset() {
   const angle = Math.random() * Math.PI * 2;
   const r = shake.magnitude * falloff;
   return { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+}
+
+// ---- combo / whole-field clear affirmations ---------------------------
+// A big center-screen banner + confetti burst, distinct from the small
+// corner pulse callouts above (those are informational, this is a reward
+// moment). Festiveness (particle count, banner scale, color count) scales
+// with combo streak so a 5-combo reads as more of an event than a 2-combo.
+const COMBO_WORDS = ['Nice!', 'Sweet!', 'Great!', 'Awesome!', 'Amazing!', 'Incredible!', 'Unstoppable!'];
+function comboAffirmationText(streak) {
+  const idx = Math.min(streak - 2, COMBO_WORDS.length - 1); // streak 2 -> first word
+  return `${COMBO_WORDS[Math.max(0, idx)]} x${streak} Combo`;
+}
+
+const CENTER_BURST_DURATION_MS = 950;
+let centerBursts = []; // { text, kind: 'combo'|'perfect', level, startedAt, expiresAt }
+let confetti = []; // { x, y, vx, vy, color, size, rotation, vr, expiresAt }
+let burstTickerRunning = false;
+
+function triggerCenterBurst(text, kind, level) {
+  const now = performance.now();
+  centerBursts.push({ text, kind, level, startedAt: now, expiresAt: now + CENTER_BURST_DURATION_MS });
+
+  const cx = layout.gridX + (BOARD_SIZE * cellSize) / 2;
+  const cy = layout.gridY + (BOARD_SIZE * cellSize) / 2;
+  const particleCount = kind === 'perfect' ? 60 : Math.min(12 + level * 8, 56);
+  const palette = kind === 'perfect' ? [...COLORS, '#ffd54a'] : COLORS;
+  for (let i = 0; i < particleCount; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 60 + Math.random() * (kind === 'perfect' ? 220 : 140);
+    confetti.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 40,
+      color: palette[Math.floor(Math.random() * palette.length)],
+      size: 3 + Math.random() * 4,
+      rotation: Math.random() * Math.PI * 2,
+      vr: (Math.random() - 0.5) * 10,
+      startedAt: now,
+      expiresAt: now + CENTER_BURST_DURATION_MS + Math.random() * 400,
+    });
+  }
+  startBurstTicker();
+}
+
+function startBurstTicker() {
+  if (burstTickerRunning) return;
+  burstTickerRunning = true;
+  const tick = () => {
+    const now = performance.now();
+    centerBursts = centerBursts.filter((b) => b.expiresAt > now);
+    confetti = confetti.filter((p) => p.expiresAt > now);
+    draw();
+    if (centerBursts.length > 0 || confetti.length > 0) {
+      requestAnimationFrame(tick);
+    } else {
+      burstTickerRunning = false;
+    }
+  };
+  requestAnimationFrame(tick);
+}
+
+function drawConfetti() {
+  const now = performance.now();
+  const gravity = 260;
+  for (const p of confetti) {
+    const t = (now - p.startedAt) / 1000;
+    const age = (now - p.startedAt) / (p.expiresAt - p.startedAt);
+    const x = p.x + p.vx * t;
+    const y = p.y + p.vy * t + 0.5 * gravity * t * t;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, 1 - age);
+    ctx.translate(x, y);
+    ctx.rotate(p.rotation + p.vr * t);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size * 1.6);
+    ctx.restore();
+  }
+}
+
+function drawCenterBursts() {
+  const now = performance.now();
+  const cx = layout.gridX + (BOARD_SIZE * cellSize) / 2;
+  const cy = layout.gridY + (BOARD_SIZE * cellSize) / 2;
+  for (const b of centerBursts) {
+    const t = (now - b.startedAt) / (b.expiresAt - b.startedAt);
+    // Pop in (first 20%), hold, fade out (last 30%).
+    const scale = t < 0.2 ? 0.6 + 0.4 * (t / 0.2) : 1;
+    const alpha = t > 0.7 ? Math.max(0, 1 - (t - 0.7) / 0.3) : 1;
+    const isPerfect = b.kind === 'perfect';
+    const baseSize = isPerfect ? 30 : Math.min(18 + b.level * 2, 30);
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(cx, cy);
+    ctx.scale(scale, scale);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `800 ${baseSize}px -apple-system, sans-serif`;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+    ctx.strokeText(b.text, 0, 0);
+    const hue = isPerfect ? '#ffd54a' : COLORS[(b.level - 2) % COLORS.length];
+    ctx.fillStyle = hue;
+    ctx.fillText(b.text, 0, 0);
+    ctx.restore();
+  }
 }
 
 function drawCallout(text, anchorX, anchorY, align = 'left') {
@@ -746,6 +852,10 @@ function draw() {
       drawCallout(callout.text, layout.gridX + (BOARD_SIZE * cellSize) / 2, layout.gridY - 12, 'center');
     }
   }
+  // --- combo / whole-field affirmation banner + confetti, drawn last of all
+  drawConfetti();
+  drawCenterBursts();
+
   ctx.restore(); // pairs with the ctx.save()/translate(shake) at the top of draw()
 }
 
@@ -832,6 +942,11 @@ function endDrag(e) {
         playLineClear(res.lineCount);
         if (res.shardCount > 0) playShardScatter(res.shardCount);
         if (res.lineCount >= 3) triggerShake(6);
+        if (res.wholeFieldClear) {
+          triggerCenterBurst('PERFECT CLEAR!', 'perfect', res.comboStreak);
+        } else if (res.comboStreak >= 2) {
+          triggerCenterBurst(comboAffirmationText(res.comboStreak), 'combo', res.comboStreak);
+        }
       }
       refreshChrome();
     }
@@ -994,6 +1109,7 @@ window.__fractureDebug = {
   getState: () => state,
   placePiece: (idx, r, c) => { const res = placePiece(state, idx, r, c); refreshChrome(); draw(); return res; },
   redraw: () => draw(),
+  triggerCenterBurst: (text, kind, level) => triggerCenterBurst(text, kind, level),
   // exact canvas-space geometry, so an external test driver doesn't have to
   // guess proportional coordinates for real pointer-drag simulation.
   geometry: () => {

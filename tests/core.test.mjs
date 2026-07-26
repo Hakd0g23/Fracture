@@ -15,6 +15,7 @@ import {
   ONBOARDING_SAFE_QUEUE_LEVEL, ONBOARDING_ELIGIBLE_AFTER_CLEARS,
   ONBOARDING_MAX_SUPPRESSED_REFILLS, EASY_SHAPE_IDS,
   FIRST_SHARD_CALLOUT_TEXT, FIRST_OVERFLOW_CALLOUT_TEXT,
+  SCORE_PER_COMBO_STEP, SCORE_WHOLE_FIELD_CLEAR_BONUS,
 } from '../src/core.js';
 import { BOARD_SIZE } from '../src/pieces.js';
 
@@ -497,6 +498,46 @@ test('Section 5b growth safety valve: also covers an ARMED-but-UNSUPPRESSED roun
   assert.equal(s.tray.length, TRAY_BASE_SIZE, 'tray must NOT grow past base size even in an armed-but-unsuppressed round');
   assert.ok(s.log.some((l) => l.includes('GROWTH SAFETY VALVE') && l.includes('armed=true')),
     'the valve must engage and say so, not silently no-op');
+});
+
+test('combo streak: back-to-back clearing placements score a growing bonus, reset by a non-clearing placement', () => {
+  const s = freshState();
+  s._forcedShardShapes = [{ id: 'shard_mono', cells: [[0, 0]] }];
+
+  setupSingleLineClear(s, 0, 0);
+  let res = placePiece(s, 0, 0, 0);
+  assert.equal(res.ok, true);
+  assert.equal(s.comboStreak, 1, 'first clear starts the streak at 1');
+  const scoreAfterFirstClear = s.score;
+
+  s._forcedShardShapes = [{ id: 'shard_mono', cells: [[0, 0]] }];
+  setupSingleLineClear(s, 1, 0);
+  res = placePiece(s, 0, 1, 0);
+  assert.equal(res.ok, true);
+  assert.equal(s.comboStreak, 2, 'second consecutive clear bumps the streak');
+  const expectedComboBonus = 2 * SCORE_PER_COMBO_STEP;
+  // Board is single-row-populated each time, so this clear also empties it
+  // again -- the whole-field bonus legitimately fires on both placements.
+  assert.equal(s.score, scoreAfterFirstClear + 1 * 10 /* SCORE_PER_LINE_CLEAR */ + 1 /* SCORE_PER_CELL_PLACED */ + expectedComboBonus + SCORE_WHOLE_FIELD_CLEAR_BONUS,
+    'second clear in the streak should add the line-clear score plus a combo bonus scaled by streak length plus the whole-field bonus');
+
+  // A placement that clears nothing resets the streak.
+  s.tray[0] = { shape: [[0, 0]], shapeId: 'mono', color: '#fff', isShard: false };
+  res = placePiece(s, 0, 5, 5);
+  assert.equal(res.ok, true);
+  assert.equal(s.comboStreak, 0, 'a non-clearing placement resets the streak');
+});
+
+test('whole-field clear: a placement that empties the entire board awards the flat bonus', () => {
+  const s = freshState();
+  s._forcedShardShapes = [{ id: 'shard_mono', cells: [[0, 0]] }];
+  setupSingleLineClear(s, 0, 0); // only row 0 has any filled cells on this otherwise-empty board
+  const scoreBefore = s.score;
+  const res = placePiece(s, 0, 0, 0);
+  assert.equal(res.ok, true);
+  assert.equal(s.board.every((row) => row.every((cell) => cell == null)), true, 'board should be fully empty after this clear');
+  assert.equal(s.score, scoreBefore + 1 /* SCORE_PER_CELL_PLACED */ + 10 /* SCORE_PER_LINE_CLEAR */ + SCORE_WHOLE_FIELD_CLEAR_BONUS,
+    'whole-field clear should add the flat bonus on top of normal clear scoring (no combo bonus yet -- this is streak=1)');
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

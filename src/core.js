@@ -122,6 +122,16 @@ export const SCORE_PER_CELL_PLACED = 1;   // placeholder scoring model
 export const SCORE_PER_LINE_CLEAR = 10;   // placeholder scoring model
 export const SCORE_PER_SHARD_CELL_AUTOCONVERT = 5; // placeholder scoring model
 
+// Combo: consecutive placements that each clear >=1 line build a streak;
+// a placement that clears nothing resets it. Bonus grows with streak length
+// so back-to-back clears are worth progressively more than the same clears
+// spread out — rewards sustained tempo, not just raw clear count.
+export const SCORE_PER_COMBO_STEP = 15;   // placeholder scoring model
+
+// Whole-field clear: flat bonus when a placement's line-clear leaves the
+// board completely empty (the "perfect clear" moment).
+export const SCORE_WHOLE_FIELD_CLEAR_BONUS = 200; // placeholder scoring model
+
 // ---- Section 5b: first-session exposure scripting -------------------------
 // Verified guard rail (docs/playtest-findings.md item 3 /
 // docs/design-doc-skeleton.md Section 5b): the shard queue must be <= this
@@ -241,6 +251,11 @@ export function findAnyPlacement(board, cells) {
 
 function stampPiece(board, cells, r, c, color) {
   for (const [dr, dc] of cells) board[r + dr][c + dc] = { color };
+}
+
+function isBoardEmpty(board) {
+  for (const row of board) for (const cell of row) if (cell != null) return false;
+  return true;
 }
 
 function findFullLines(board) {
@@ -433,6 +448,7 @@ export function createGame(seed = Date.now(), opts = {}) {
     tray: [],
     shardQueue: [],
     score: 0,
+    comboStreak: 0, // consecutive clearing placements; resets on a non-clearing placement
     gameOver: false,
     rng: mulberry32(seed >>> 0),
     log: [],
@@ -721,9 +737,26 @@ export function placePiece(state, trayIndex, r, c) {
   // Step 1: line clear + shard generation.
   const { rows, cols } = findFullLines(state.board);
   const lineCount = rows.length + cols.length;
+  let comboStreak = 0;
+  let wholeFieldClear = false;
   if (lineCount > 0) {
     clearLines(state.board, rows, cols);
     state.score += lineCount * SCORE_PER_LINE_CLEAR;
+
+    state.comboStreak += 1;
+    comboStreak = state.comboStreak;
+    if (state.comboStreak > 1) {
+      const comboBonus = state.comboStreak * SCORE_PER_COMBO_STEP;
+      state.score += comboBonus;
+      logEvent(state, `Combo x${state.comboStreak}! (+${comboBonus})`);
+    }
+
+    if (isBoardEmpty(state.board)) {
+      wholeFieldClear = true;
+      state.score += SCORE_WHOLE_FIELD_CLEAR_BONUS;
+      logEvent(state, `Whole-field clear! (+${SCORE_WHOLE_FIELD_CLEAR_BONUS})`);
+    }
+
     logEvent(state, `Cleared ${lineCount} line(s) (rows:[${rows}] cols:[${cols}]) with a ${piece.color} ${piece.shapeId}.`);
     if (state.onboarding) {
       state.onboarding.totalClears += 1;
@@ -769,6 +802,8 @@ export function placePiece(state, trayIndex, r, c) {
       // Steps 1 (safety rule) + 2 (queue/overflow) for this shard.
       resolveGeneratedShard(state, shard, vacatedSlotRef);
     }
+  } else {
+    state.comboStreak = 0;
   }
 
   // Step 3: tray refill (queue drains first), only once ALL slots empty.
@@ -781,7 +816,10 @@ export function placePiece(state, trayIndex, r, c) {
   // gives main.js enough structured info to drive sound/juice effects
   // (line-clear chime + flash/shake, shard-scatter sound) without re-parsing
   // state.log strings or re-deriving line count from board diffing.
-  return { ok: true, lineCount, rows, cols, shardCount: lineCount > 0 ? shardCountForClear(lineCount) : 0 };
+  return {
+    ok: true, lineCount, rows, cols, shardCount: lineCount > 0 ? shardCountForClear(lineCount) : 0,
+    comboStreak, wholeFieldClear,
+  };
 }
 
 export function canPlaceAnySlot(state) {
