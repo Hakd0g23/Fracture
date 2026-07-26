@@ -22,12 +22,22 @@
 // load time.
 
 let ctx = null;
+let sfxGain = null;
+let bgmGain = null;
 
 function getCtx() {
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return null; // unsupported browser -- fail silent, never crash the game over audio
     ctx = new AC();
+    // Two independent volume buses so sfx/bgm sliders don't fight each
+    // other -- both feed ctx.destination, nothing bypasses them.
+    sfxGain = ctx.createGain();
+    sfxGain.gain.value = sfxVolume;
+    sfxGain.connect(ctx.destination);
+    bgmGain = ctx.createGain();
+    bgmGain.gain.value = bgmVolume;
+    bgmGain.connect(ctx.destination);
   }
   if (ctx.state === 'suspended') ctx.resume().catch(() => {});
   return ctx;
@@ -36,6 +46,39 @@ function getCtx() {
 let muted = false;
 export function setMuted(v) { muted = v; }
 export function isMuted() { return muted; }
+
+// ---- volume buses -----------------------------------------------------
+// Persisted separately from `muted` (a full mute toggle, if the game ever
+// grows one) so a volume of 0 and "muted" are distinct concepts, matching
+// how the settings panel presents them as two independent sliders.
+const LS_KEY_SFX_VOLUME = 'fracture.sfxVolume';
+const LS_KEY_BGM_VOLUME = 'fracture.bgmVolume';
+
+function loadVolume(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    const v = parseFloat(raw);
+    return Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback;
+  } catch { return fallback; }
+}
+
+let sfxVolume = loadVolume(LS_KEY_SFX_VOLUME, 0.8);
+let bgmVolume = loadVolume(LS_KEY_BGM_VOLUME, 0.5);
+
+export function setSfxVolume(v) {
+  sfxVolume = Math.max(0, Math.min(1, v));
+  if (sfxGain) sfxGain.gain.value = sfxVolume;
+  try { localStorage.setItem(LS_KEY_SFX_VOLUME, String(sfxVolume)); } catch { /* ignore (private mode, etc.) */ }
+}
+export function getSfxVolume() { return sfxVolume; }
+
+export function setBgmVolume(v) {
+  bgmVolume = Math.max(0, Math.min(1, v));
+  if (bgmGain) bgmGain.gain.value = bgmVolume;
+  try { localStorage.setItem(LS_KEY_BGM_VOLUME, String(bgmVolume)); } catch { /* ignore (private mode, etc.) */ }
+}
+export function getBgmVolume() { return bgmVolume; }
 
 // ---- endless-mode wave sound packs -----------------------------------------
 // Same escalation as the wave color palettes in index.html: each tier detunes
@@ -62,15 +105,16 @@ function soundPack() { return WAVE_SOUND_PACKS[waveTier]; }
 // shared gain node with a short master envelope. `baseFreq` in Hz,
 // `duration` in seconds, `gain` peak linear gain (kept low -- several of
 // these can stack in a fast combo).
-function playBell(baseFreq, duration, gain, when = 0) {
+function playBell(baseFreq, duration, gain, when = 0, bus = null) {
   const ac = getCtx();
   if (!ac || muted) return;
+  const outBus = bus || sfxGain;
   const t0 = ac.currentTime + when;
   const master = ac.createGain();
   master.gain.setValueAtTime(0, t0);
   master.gain.linearRampToValueAtTime(gain, t0 + 0.006);
   master.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
-  master.connect(ac.destination);
+  master.connect(outBus);
 
   // Inharmonic partial ratios -- deliberately not 1/2/3 (that would sound
   // like a harmonic/organ tone) so this reads as glass/metal, not wood/string.
@@ -119,7 +163,7 @@ function playNoiseTick(freq, duration, gain, when = 0) {
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
   src.connect(filter);
   filter.connect(g);
-  g.connect(ac.destination);
+  g.connect(sfxGain);
   src.start(t0);
   src.stop(t0 + duration + 0.02);
 }
@@ -158,6 +202,69 @@ export function playGameOver() {
   playBell(520, 0.5, 0.22, 0);
   playBell(390, 0.6, 0.2, 0.14);
   playBell(260, 0.9, 0.22, 0.3);
+}
+
+// ---- background music --------------------------------------------------
+// A slow generative ambient loop, same synthesis toolkit (inharmonic sine
+// partials) as the sfx bell voice but soft/long-decay instead of a short
+// "chime" -- reads as a sustained glassy pad rather than another sfx hit.
+// Notes are drawn from a pentatonic-ish scale (no dissonant clashes however
+// they land) and scheduled ahead of `ac.currentTime` using a classic
+// look-ahead scheduler so timing survives tab-throttled setTimeout jitter.
+const BGM_SCALE = [261.63, 293.66, 329.63, 392.0, 440.0]; // C D E G A -- open, ambient, no leading tone
+const BGM_NOTE_MIN_GAP = 2.2;
+const BGM_NOTE_MAX_GAP = 4.2;
+const BGM_LOOKAHEAD = 2.0; // seconds of schedule to keep queued
+
+function playPad(freq, duration, gain, when, bus) {
+  const ac = getCtx();
+  if (!ac) return;
+  const t0 = ac.currentTime + when;
+  const master = ac.createGain();
+  master.gain.setValueAtTime(0, t0);
+  master.gain.linearRampToValueAtTime(gain, t0 + duration * 0.3);
+  master.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+  master.connect(bus);
+  const ratios = [1.0, 2.01, 3.0]; // near-harmonic -- softer/rounder than the sfx bell's inharmonic ratios
+  for (const ratio of ratios) {
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq * ratio, t0);
+    const partialGain = ac.createGain();
+    partialGain.gain.setValueAtTime(1 / ratios.length, t0);
+    osc.connect(partialGain);
+    partialGain.connect(master);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.1);
+  }
+}
+
+let bgmTimer = null;
+let bgmNextNoteAt = 0;
+
+function scheduleBgmNotes() {
+  const ac = getCtx();
+  if (!ac || !bgmGain) return;
+  while (bgmNextNoteAt < ac.currentTime + BGM_LOOKAHEAD) {
+    const freq = BGM_SCALE[Math.floor(Math.random() * BGM_SCALE.length)] * (Math.random() < 0.5 ? 1 : 0.5);
+    const duration = 2.6 + Math.random() * 1.4;
+    playPad(freq, duration, 0.16, bgmNextNoteAt - ac.currentTime, bgmGain);
+    bgmNextNoteAt += BGM_NOTE_MIN_GAP + Math.random() * (BGM_NOTE_MAX_GAP - BGM_NOTE_MIN_GAP);
+  }
+  bgmTimer = setTimeout(scheduleBgmNotes, 500);
+}
+
+// Starts the generative bgm loop. Safe to call repeatedly (no-ops if already
+// running); must run after unlockAudio()/a user gesture like the sfx voices.
+export function startBgm() {
+  const ac = getCtx();
+  if (!ac || bgmTimer) return;
+  bgmNextNoteAt = ac.currentTime + 0.2;
+  scheduleBgmNotes();
+}
+
+export function stopBgm() {
+  if (bgmTimer) { clearTimeout(bgmTimer); bgmTimer = null; }
 }
 
 // Called once from a real user-gesture handler (pointerdown) to unlock audio

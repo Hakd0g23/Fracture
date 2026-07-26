@@ -6,7 +6,7 @@
 import { createGame, placePiece, canPlaceAt, mulberry32, QUEUE_CAP, TRAY_BASE_SIZE, WAVE_MAX_TIER, waveCalloutText } from './core.js';
 import { BOARD_SIZE, COLORS } from './pieces.js';
 import { ATLAS_TILE, ATLAS_VARIANTS, ATLAS_PATH } from './spriteAtlasConfig.js';
-import { playLineClear, playShardScatter, playGameOver, unlockAudio, setWaveTier } from './audio.js';
+import { playLineClear, playShardScatter, playGameOver, unlockAudio, setWaveTier, startBgm, setSfxVolume, getSfxVolume, setBgmVolume, getBgmVolume } from './audio.js';
 import { fetchTopScores, submitScore } from './leaderboard.js';
 
 const canvas = document.getElementById('stage');
@@ -27,6 +27,10 @@ const submitScoreBtn = document.getElementById('submitScoreBtn');
 const submitStatusEl = document.getElementById('submitStatus');
 const leaderboardListEl = document.getElementById('leaderboardList');
 const themeToggleBtn = document.getElementById('themeToggleBtn');
+const settingsBtn = document.getElementById('settingsBtn');
+const settingsPanel = document.getElementById('settingsPanel');
+const bgmVolumeSlider = document.getElementById('bgmVolumeSlider');
+const sfxVolumeSlider = document.getElementById('sfxVolumeSlider');
 const LS_KEY_PLAYER_NAME = 'fracture.playerName';
 
 // ---- light/dark theme -------------------------------------------------
@@ -55,6 +59,22 @@ themeToggleBtn.addEventListener('click', () => {
   try { localStorage.setItem(LS_KEY_THEME, next); } catch { /* ignore (private mode, etc.) */ }
   applyTheme(next);
   draw();
+});
+
+// ---- settings panel (bgm/sfx volume) -----------------------------------
+// Sliders reflect audio.js's persisted volumes on load; audio.js owns the
+// localStorage keys and clamping, this just mirrors state into the DOM.
+bgmVolumeSlider.value = String(Math.round(getBgmVolume() * 100));
+sfxVolumeSlider.value = String(Math.round(getSfxVolume() * 100));
+
+settingsBtn.addEventListener('click', () => {
+  settingsPanel.classList.toggle('show');
+});
+bgmVolumeSlider.addEventListener('input', () => {
+  setBgmVolume(Number(bgmVolumeSlider.value) / 100);
+});
+sfxVolumeSlider.addEventListener('input', () => {
+  setSfxVolume(Number(sfxVolumeSlider.value) / 100);
 });
 
 function theme() {
@@ -764,6 +784,7 @@ function trayIndexAt(x, y) {
 
 canvas.addEventListener('pointerdown', (e) => {
   unlockAudio(); // must run from a real user-gesture handler; safe to call every time
+  startBgm(); // no-ops if already running
   if (state.gameOver) return;
   const p = pointFromEvent(e);
   const idx = trayIndexAt(p.x, p.y);
