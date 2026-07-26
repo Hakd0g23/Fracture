@@ -13,6 +13,8 @@ const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
 const scoreVal = document.getElementById('scoreVal');
 const bestVal = document.getElementById('bestVal');
+const waveLine = document.getElementById('waveLine');
+const waveVal = document.getElementById('waveVal');
 const logEl = document.getElementById('log');
 const overlay = document.getElementById('overlay');
 const finalScoreEl = document.getElementById('finalScore');
@@ -796,6 +798,13 @@ canvas.addEventListener('pointercancel', () => { drag = null; draw(); });
 
 function refreshChrome() {
   scoreVal.textContent = state.score;
+  const waveTier = state.onboarding ? state.onboarding.waveTier : 0;
+  if (waveTier > 0) {
+    waveVal.textContent = waveTier;
+    waveLine.classList.add('show');
+  } else {
+    waveLine.classList.remove('show');
+  }
   // append only new log lines (only bother touching the DOM panel if it's
   // actually visible -- dev-only, see DEBUG_LOG_PANEL above)
   if (DEBUG_LOG_PANEL) {
@@ -863,6 +872,7 @@ function newGame() {
   bestDeltaEl.classList.remove('new-best');
   scoreVal.textContent = '0';
   bestVal.textContent = bestScore;
+  waveLine.classList.remove('show');
   submitStatusEl.textContent = '';
   submitScoreBtn.disabled = false;
   saveGameState(state);
