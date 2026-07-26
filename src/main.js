@@ -3,10 +3,10 @@
 // stay unit-testable headlessly). Uses Pointer Events so mouse (desktop) and
 // touch (mobile/tablet browsers) share one code path instead of two.
 
-import { createGame, placePiece, canPlaceAt, mulberry32, QUEUE_CAP, TRAY_BASE_SIZE } from './core.js';
+import { createGame, placePiece, canPlaceAt, mulberry32, QUEUE_CAP, TRAY_BASE_SIZE, WAVE_MAX_TIER, waveCalloutText } from './core.js';
 import { BOARD_SIZE, COLORS } from './pieces.js';
 import { ATLAS_TILE, ATLAS_VARIANTS, ATLAS_PATH } from './spriteAtlasConfig.js';
-import { playLineClear, playShardScatter, playGameOver, unlockAudio } from './audio.js';
+import { playLineClear, playShardScatter, playGameOver, unlockAudio, setWaveTier } from './audio.js';
 import { fetchTopScores, submitScore } from './leaderboard.js';
 
 const canvas = document.getElementById('stage');
@@ -74,6 +74,31 @@ function theme() {
 // debugging without a code change (just add the query param).
 const DEBUG_LOG_PANEL = new URLSearchParams(location.search).has('debug');
 if (DEBUG_LOG_PANEL && logEl) logEl.classList.add('show');
+
+// ---- dev-only wave tier shortcut --------------------------------------
+// Wave tiers (see WAVE_MAX_TIER in core.js) only actually change every
+// WAVE_INTERVAL_CLEARS=18 clears, far too slow to eyeball the per-wave
+// palette/sound pack (index.html [data-wave-tier], audio.js
+// WAVE_SOUND_PACKS) against both themes. Reuses the same ?debug=1 gate as
+// the log panel above; press W to cycle tiers 0..WAVE_MAX_TIER and hear/see
+// the change immediately, combine with the theme toggle button to check
+// both light and dark without reloading.
+if (DEBUG_LOG_PANEL) {
+  window.addEventListener('keydown', (e) => {
+    if (e.key !== 'w' && e.key !== 'W') return;
+    if (!state.onboarding) return;
+    state.onboarding.waveTier = (state.onboarding.waveTier + 1) % (WAVE_MAX_TIER + 1);
+    if (state.onboarding.waveTier > 0) {
+      state.pendingCallouts.push({
+        type: 'wave',
+        tier: state.onboarding.waveTier,
+        text: waveCalloutText(state.onboarding.waveTier),
+      });
+    }
+    refreshChrome();
+    draw();
+  });
+}
 
 // ---- Section 5b: persisted onboarding flags --------------------------------
 // core.js is DOM-free and can't read/write localStorage itself, so main.js
@@ -805,6 +830,12 @@ function refreshChrome() {
   } else {
     waveLine.classList.remove('show');
   }
+  // Wave color palette (index.html [data-wave-tier] blocks) + sound pack
+  // (audio.js WAVE_SOUND_PACKS) both key off the same tier, so a single
+  // assignment here keeps them in lockstep -- cheap to set every refresh
+  // since both are no-ops when the tier hasn't actually changed.
+  document.documentElement.dataset.waveTier = String(waveTier);
+  setWaveTier(waveTier);
   // append only new log lines (only bother touching the DOM panel if it's
   // actually visible -- dev-only, see DEBUG_LOG_PANEL above)
   if (DEBUG_LOG_PANEL) {

@@ -71,6 +71,25 @@
     --row-alt: rgba(0,0,0,0.045);
     --log-bg: #e7e9ee;
   }
+  /* ---- endless-mode wave palettes ----------------------------------------
+     Each escalating wave tier (see WAVE_MAX_TIER in core.js) retints the
+     accent + board colors so difficulty ramps read visually, not just via
+     the callout text. Only --accent/--canvas-bg/--grid-line/--empty-cell
+     shift (not the full chrome) so the UI stays legible in both themes --
+     applied on top of [data-theme], never replacing it. Hue climbs
+     yellow -> orange -> red -> violet with tier, reading as rising heat. */
+  :root[data-wave-tier="1"] { --accent: #f0a020; }
+  :root[data-wave-tier="2"] { --accent: #e8622a; }
+  :root[data-wave-tier="3"] { --accent: #e0392f; }
+  :root[data-wave-tier="4"] { --accent: #b83fd6; }
+  :root[data-theme="dark"][data-wave-tier="1"] { --canvas-bg: #26221f; --empty-cell: #322b24; --grid-line: #1d1a17; }
+  :root[data-theme="dark"][data-wave-tier="2"] { --canvas-bg: #291d1b; --empty-cell: #3a2419; --grid-line: #201411; }
+  :root[data-theme="dark"][data-wave-tier="3"] { --canvas-bg: #291d1e; --empty-cell: #382220; --grid-line: #201414; }
+  :root[data-theme="dark"][data-wave-tier="4"] { --canvas-bg: #241d29; --empty-cell: #30253a; --grid-line: #1a1520; }
+  :root[data-theme="light"][data-wave-tier="1"] { --canvas-bg: #f4ece0; --empty-cell: #e6dac8; --grid-line: #cdbfa8; }
+  :root[data-theme="light"][data-wave-tier="2"] { --canvas-bg: #f5e8e0; --empty-cell: #e9d5c6; --grid-line: #d1b9a5; }
+  :root[data-theme="light"][data-wave-tier="3"] { --canvas-bg: #f6e4e2; --empty-cell: #ecccc8; --grid-line: #d4aaa6; }
+  :root[data-theme="light"][data-wave-tier="4"] { --canvas-bg: #efe4f5; --empty-cell: #ddc4ea; --grid-line: #bb9dcc; }
   html, body {
     margin: 0; padding: 0; height: 100%;
     background: var(--bg); color: var(--fg);

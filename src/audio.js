@@ -37,6 +37,26 @@ let muted = false;
 export function setMuted(v) { muted = v; }
 export function isMuted() { return muted; }
 
+// ---- endless-mode wave sound packs -----------------------------------------
+// Same escalation as the wave color palettes in index.html: each tier detunes
+// the bell partials a little further from the clean glassy default and drops
+// the base pitch, so waves read as progressively heavier/grittier without
+// leaving the "glassy, not thud" brief (no ratio ever collapses to a small
+// integer, which would read as harmonic/wood instead of inharmonic/glass).
+const WAVE_SOUND_PACKS = [
+  { partialRatios: [1.0, 2.41, 3.83], pitchMult: 1.0 },   // tier 0: default
+  { partialRatios: [1.0, 2.32, 3.71], pitchMult: 0.97 },  // tier 1
+  { partialRatios: [1.0, 2.19, 3.52], pitchMult: 0.94 },  // tier 2
+  { partialRatios: [1.0, 2.05, 3.28], pitchMult: 0.9 },   // tier 3
+  { partialRatios: [1.0, 1.87, 2.96], pitchMult: 0.85 },  // tier 4
+];
+
+let waveTier = 0;
+export function setWaveTier(tier) {
+  waveTier = Math.max(0, Math.min(tier, WAVE_SOUND_PACKS.length - 1));
+}
+function soundPack() { return WAVE_SOUND_PACKS[waveTier]; }
+
 // One inharmonic bell/FM "chip" voice: a carrier tone plus a couple of
 // non-integer-ratio partials, each with its own fast decay, mixed to a
 // shared gain node with a short master envelope. `baseFreq` in Hz,
@@ -54,15 +74,16 @@ function playBell(baseFreq, duration, gain, when = 0) {
 
   // Inharmonic partial ratios -- deliberately not 1/2/3 (that would sound
   // like a harmonic/organ tone) so this reads as glass/metal, not wood/string.
-  const partials = [
-    { ratio: 1.0, mix: 1.0 },
-    { ratio: 2.41, mix: 0.5 },
-    { ratio: 3.83, mix: 0.28 },
-  ];
+  // Ratios and base-pitch multiplier come from the current wave sound pack
+  // (see WAVE_SOUND_PACKS above) so effects grow heavier as waves escalate.
+  const pack = soundPack();
+  const mixes = [1.0, 0.5, 0.28];
+  const partials = pack.partialRatios.map((ratio, i) => ({ ratio, mix: mixes[i] }));
+  const pitchedFreq = baseFreq * pack.pitchMult;
   for (const p of partials) {
     const osc = ac.createOscillator();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(baseFreq * p.ratio, t0);
+    osc.frequency.setValueAtTime(pitchedFreq * p.ratio, t0);
     const partialGain = ac.createGain();
     partialGain.gain.setValueAtTime(p.mix, t0);
     // Each partial decays slightly faster than the last (higher partials die
