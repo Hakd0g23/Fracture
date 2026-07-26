@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import {
   createGame, placePiece, canPlaceAt, findAnyPlacement, resolveGeneratedShard,
-  checkGameOver,
+  checkGameOver, canPlaceAllPieces, maybeRefillTray,
   QUEUE_CAP, TRAY_BASE_SIZE, SCORE_PER_SHARD_CELL_AUTOCONVERT,
   ONBOARDING_SAFE_QUEUE_LEVEL, ONBOARDING_ELIGIBLE_AFTER_CLEARS,
   ONBOARDING_MAX_SUPPRESSED_REFILLS, EASY_SHAPE_IDS,
@@ -579,6 +579,59 @@ test('mercy piece: does not fire, and is not consumed, when a tray piece already
 
   assert.equal(s.gameOver, false);
   assert.equal(s.mercyChargesRemaining, 1, 'charge must not be spent when the tray already has a valid move');
+});
+
+// isolatedGapBoard, but row 0 also gets a 3-wide contiguous pocket at
+// cols 2-4 -- deliberately NOT touching col 0, whose own isolated diagonal
+// gap sits at (0,0) and would otherwise be adjacent to (and silently widen)
+// the pocket. Columns 2-4 each keep their own isolated diagonal free cell
+// too, so nothing in this board can ever complete a line (no clear possible
+// from any placement this file's dominoes/monos can make) -- the pocket is
+// a fixed 3-cell budget, never expandable via a clear.
+function tightPocketBoard() {
+  const board = isolatedGapBoard();
+  board[0][2] = null;
+  board[0][3] = null;
+  board[0][4] = null;
+  return board;
+}
+
+test('canPlaceAllPieces: true when board has ample room for every piece', () => {
+  const board = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(null));
+  const shapes = [unplaceableDomino.shape, unplaceableDomino.shape, [[0, 0]]];
+  assert.equal(canPlaceAllPieces(board, shapes), true);
+});
+
+test('canPlaceAllPieces: false when two pieces individually fit but cannot both fit at once', () => {
+  const board = tightPocketBoard();
+  // Each domino fits somewhere on its own (the 3-cell pocket has room for one).
+  assert.equal(findAnyPlacement(board, unplaceableDomino.shape) != null, true);
+  // But the pocket is only 3 cells wide -- two dominoes need 4, and nowhere
+  // else on the board is reachable by a domino (every other gap is an
+  // isolated single cell).
+  assert.equal(canPlaceAllPieces(board, [unplaceableDomino.shape, unplaceableDomino.shape]), false);
+});
+
+test('canPlaceAllPieces: adding a mono instead of a second domino restores solvability', () => {
+  const board = tightPocketBoard();
+  assert.equal(canPlaceAllPieces(board, [unplaceableDomino.shape, [[0, 0]], [[0, 0]]]), true);
+});
+
+test('joint-solvability mercy: maybeRefillTray deals a tray that is always jointly solvable when a mercy charge is available', () => {
+  // maybeRefillTray deals its own randomly-weighted fresh pieces, so rather
+  // than trying to force a specific unsolvable draw, assert the guarantee
+  // itself across many seeds against a board where an unsolvable draw is
+  // actually likely (the 3-cell pocket from tightPocketBoard): whatever
+  // tray comes out the other side must be jointly solvable.
+  for (let seed = 1; seed <= 30; seed++) {
+    const s = freshState(seed);
+    s.board = tightPocketBoard();
+    s.tray = [null, null, null];
+    maybeRefillTray(s);
+    const shapes = s.tray.filter((slot) => slot != null).map((slot) => slot.shape);
+    assert.equal(canPlaceAllPieces(s.board, shapes), true,
+      `seed ${seed}: freshly dealt tray must be jointly solvable when a mercy charge is available`);
+  }
 });
 
 test('mercy piece: once the charge is spent, a second dead end is a real game-over', () => {

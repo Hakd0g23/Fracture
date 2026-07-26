@@ -580,7 +580,7 @@ function insertShard(state, shard, vacatedSlotRef) {
   return { overflow: true };
 }
 
-function maybeRefillTray(state) {
+export function maybeRefillTray(state) {
   if (!state.tray.every((slot) => slot == null)) return;
   const ob = state.onboarding;
 
@@ -671,6 +671,44 @@ function maybeRefillTray(state) {
     ob.armedRound = false;
   }
 
+  // Joint-solvability mercy (game-designer follow-up to the single-piece
+  // MERCY_MAX_OPEN_REGION rule above): a fresh 3-piece tray can pass the
+  // OLD check (every piece fits *somewhere*, independently) while still
+  // having no order that lands all three -- e.g. two pieces only fit the
+  // same cells. Shares the same one-shot mercyChargesRemaining budget as the
+  // single-piece rule (a deliberate choice, not an oversight: this is a
+  // strictly rarer, strictly stronger trigger condition, not a second free
+  // resource) -- consuming it here means the game guarantees THIS freshly-
+  // dealt hand has a way through, at the cost of not also being able to save
+  // a later genuine top-out. Only ever swaps a fresh, non-shard, non-scripted
+  // slot (shards/scripted pieces keep their existing "never reshape" rules)
+  // and only when a swap can be found that actually restores solvability --
+  // if no candidate works, the tray is left as dealt rather than pretending
+  // to have fixed it. Deliberately does NOT protect against a player
+  // misplacing pieces after this check passes -- see build report.
+  if (fresh.every((slot) => slot != null) && state.mercyChargesRemaining > 0) {
+    const shapes = fresh.map((slot) => slot.shape);
+    if (!canPlaceAllPieces(state.board, shapes)) {
+      const bySize = [...EASY_SHAPES].sort((a, b) => a.cells.length - b.cells.length);
+      outer:
+      for (let i = 0; i < fresh.length; i++) {
+        if (armPlan && i === armPlan.targetSlot) continue; // never touch the scripted piece
+        if (fresh[i].isShard) continue; // never reshape a drained shard -- Section 3 owns that semantics
+        for (const candidate of bySize) {
+          const trial = shapes.slice();
+          trial[i] = candidate.cells;
+          if (canPlaceAllPieces(state.board, trial)) {
+            fresh[i] = { shape: candidate.cells, shapeId: candidate.id, color: pick(COLORS, state.rng), isShard: false, isMercy: true };
+            state.mercyChargesRemaining -= 1;
+            logEvent(state, `MERCY: freshly dealt tray had no order that placed all ${fresh.length} pieces -- swapped slot ${i} for a guaranteed-fit ${candidate.id} (charges remaining: ${state.mercyChargesRemaining}).`);
+            state.pendingCallouts.push({ type: 'mercy', text: 'This hand always has a way through -- find it.' });
+            break outer;
+          }
+        }
+      }
+    }
+  }
+
   state.tray = fresh;
 }
 
@@ -747,6 +785,32 @@ export function largestEmptyRegionSize(board) {
 // engagement rate (16.7%/37.7% of games, vs. 100% uncapped) -- consistent
 // with "occasionally saves a genuine top-out," not "saves every game."
 export const MERCY_MAX_OPEN_REGION = 6;
+
+// True if there exists SOME order to place every shape in `pieces` such that
+// each placement is individually legal on the board at the moment it's made,
+// applying line-clears in between (real placePiece clear rules, just no
+// shard generation -- this is a "can these pieces physically all land
+// somewhere" check for tray-deal-time solvability, not a full turn
+// simulation). Backtracking search: 3 pieces x <=64 board cells is small
+// enough to run once per tray refill without a noticeable frame hitch.
+export function canPlaceAllPieces(board, pieces) {
+  if (pieces.length === 0) return true;
+  for (let i = 0; i < pieces.length; i++) {
+    const shape = pieces[i];
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (!canPlaceAt(board, shape, r, c)) continue;
+        const next = board.map((row) => row.slice());
+        stampPiece(next, shape, r, c, '#');
+        const { rows, cols } = findFullLines(next);
+        if (rows.length || cols.length) clearLines(next, rows, cols);
+        const rest = pieces.slice(0, i).concat(pieces.slice(i + 1));
+        if (canPlaceAllPieces(next, rest)) return true;
+      }
+    }
+  }
+  return false;
+}
 
 export function checkGameOver(state) {
   const anyFits = state.tray.some((slot) => slot != null && findAnyPlacement(state.board, slot.shape) != null);
