@@ -2,3 +2,6 @@
 node_modules/
 www/
 dist/
+
+# Local Netlify folder
+.netlify
