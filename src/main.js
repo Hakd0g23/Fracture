@@ -3,7 +3,7 @@
 // stay unit-testable headlessly). Uses Pointer Events so mouse (desktop) and
 // touch (mobile/tablet browsers) share one code path instead of two.
 
-import { createGame, placePiece, canPlaceAt, QUEUE_CAP, TRAY_BASE_SIZE } from './core.js';
+import { createGame, placePiece, canPlaceAt, mulberry32, QUEUE_CAP, TRAY_BASE_SIZE } from './core.js';
 import { BOARD_SIZE, COLORS } from './pieces.js';
 import { ATLAS_TILE, ATLAS_VARIANTS, ATLAS_PATH } from './spriteAtlasConfig.js';
 import { playLineClear, playShardScatter, playGameOver, unlockAudio } from './audio.js';
@@ -18,6 +18,7 @@ const overlay = document.getElementById('overlay');
 const finalScoreEl = document.getElementById('finalScore');
 const bestDeltaEl = document.getElementById('bestDelta');
 const newGameBtn = document.getElementById('newGameBtn');
+const quitBtn = document.getElementById('quitBtn');
 const restartBtn = document.getElementById('restartBtn');
 const nameInput = document.getElementById('nameInput');
 const submitScoreBtn = document.getElementById('submitScoreBtn');
@@ -84,7 +85,47 @@ function persistOnboardingFlags(s) {
   writeBoolFlag(LS_KEY_SHARD_CALLOUT, s.onboarding.firstShardCalloutFired);
 }
 
-let state = newGameState();
+// ---- resume-on-reload: persist the in-progress run so closing the tab/
+// browser mid-game doesn't lose it -----------------------------------------
+// Only the JSON-serializable fields are saved -- state.rng is a mulberry32
+// closure over internal state that isn't exposed for serialization, so a
+// resumed game gets a freshly seeded rng rather than continuing the exact
+// same random sequence. That only affects which piece/shard shows up next,
+// never anything already on the board, and is not worth core.js exposing
+// its PRNG internals for.
+const LS_KEY_GAME_STATE = 'fracture.gameState';
+
+function saveGameState(s) {
+  try {
+    const { board, tray, shardQueue, score, gameOver, log, turn, firstExposureComplete, pendingCallouts, onboarding } = s;
+    localStorage.setItem(LS_KEY_GAME_STATE, JSON.stringify({
+      board, tray, shardQueue, score, gameOver, log, turn, firstExposureComplete, pendingCallouts, onboarding,
+    }));
+  } catch { /* ignore (private mode, etc.) */ }
+}
+
+function clearSavedGameState() {
+  try { localStorage.removeItem(LS_KEY_GAME_STATE); } catch { /* ignore */ }
+}
+
+function tryLoadGameState() {
+  try {
+    const raw = localStorage.getItem(LS_KEY_GAME_STATE);
+    if (!raw) return null;
+    const saved = JSON.parse(raw);
+    if (!saved || typeof saved !== 'object') return null;
+    if (!Array.isArray(saved.board) || !Array.isArray(saved.tray) || !Array.isArray(saved.shardQueue)) return null;
+    if (typeof saved.score !== 'number' || typeof saved.gameOver !== 'boolean') return null;
+    if (saved.gameOver) return null; // a finished run isn't resumable
+    saved.rng = mulberry32(Date.now());
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+let state = tryLoadGameState() ?? newGameState();
+saveGameState(state);
 let lastLogLen = 0;
 
 // ---- Section 5b: non-blocking pulse callouts --------------------------------
@@ -748,7 +789,20 @@ function refreshChrome() {
   }
   ingestPendingCallouts(state);
   persistOnboardingFlags(state);
+  // A finished run (game-over or an explicit quit, which sets the same
+  // flag) is no longer resumable, so drop the save; otherwise keep it fresh
+  // so closing the tab mid-game doesn't lose progress.
+  if (state.gameOver) clearSavedGameState();
+  else saveGameState(state);
   computeLayout(); // tray length can grow via overflow escalation
+}
+
+function quitGame() {
+  if (state.gameOver) return;
+  if (!confirm('Quit this game? Your current run will end and show the Game Over screen.')) return;
+  state.gameOver = true;
+  refreshChrome();
+  draw();
 }
 
 function newGame() {
@@ -765,12 +819,14 @@ function newGame() {
   bestVal.textContent = bestScore;
   submitStatusEl.textContent = '';
   submitScoreBtn.disabled = false;
+  saveGameState(state);
   computeLayout();
   draw();
 }
 
 newGameBtn.addEventListener('click', newGame);
 restartBtn.addEventListener('click', newGame);
+quitBtn.addEventListener('click', quitGame);
 window.addEventListener('resize', () => { computeLayout(); draw(); });
 
 // ---- online leaderboard (Supabase) ------------------------------------
@@ -837,6 +893,9 @@ window.__fractureDebug = {
   },
 };
 
+// Reflect a resumed in-progress run's score immediately (a fresh game is
+// already 0, so this is a no-op in that case).
+scoreVal.textContent = state.score;
 bestVal.textContent = bestScore;
 computeLayout();
 draw();
