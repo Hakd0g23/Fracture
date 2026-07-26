@@ -5,10 +5,75 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
 <title>Fracture</title>
 <style>
-  :root { color-scheme: dark; }
+  /* ---- theming ----------------------------------------------------------
+     CSS custom properties drive both the DOM chrome below and the canvas
+     renderer (main.js reads these via getComputedStyle so board/tray/queue
+     repaint in the right theme too, not just the surrounding page). Dark is
+     the default; a light block wins under prefers-color-scheme unless the
+     user has an explicit choice, which always wins via the higher-specificity
+     [data-theme] attribute selectors -- same pattern as an Artifact's
+     light/dark contract. */
+  :root {
+    color-scheme: dark;
+    --bg: #1b1d23; --fg: #e8e8ec; --muted: #7a7e8c;
+    --panel-bg: #22242c; --panel-border: #2c2f38;
+    --border: #454a58; --border-dim: #33363f;
+    --input-bg: #2f333d;
+    --button-bg: #2f333d; --button-hover: #3a3f4b;
+    --accent: #f1c40f; --accent-text: #1b1d23;
+    --canvas-bg: #22242c; --empty-cell: #2a2d36; --grid-line: #1b1d23;
+    --overlay-bg: rgba(10,10,14,0.82);
+    --callout-bg: rgba(30,32,40,0.95); --callout-text: #e8e8ec;
+    --row-alt: rgba(255,255,255,0.04);
+    --log-bg: #16171c;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      color-scheme: light;
+      --bg: #f5f6f8; --fg: #1b1d23; --muted: #5a5f6d;
+      --panel-bg: #ffffff; --panel-border: #d8dae0;
+      --border: #b7bcc7; --border-dim: #d7dae1;
+      --input-bg: #ffffff;
+      --button-bg: #e9ebf0; --button-hover: #dde0e7;
+      --accent: #a8790a; --accent-text: #ffffff;
+      --canvas-bg: #eef0f4; --empty-cell: #dfe2e8; --grid-line: #c3c7d1;
+      --overlay-bg: rgba(255,255,255,0.85);
+      --callout-bg: rgba(255,255,255,0.96); --callout-text: #1b1d23;
+      --row-alt: rgba(0,0,0,0.045);
+      --log-bg: #e7e9ee;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #1b1d23; --fg: #e8e8ec; --muted: #7a7e8c;
+    --panel-bg: #22242c; --panel-border: #2c2f38;
+    --border: #454a58; --border-dim: #33363f;
+    --input-bg: #2f333d;
+    --button-bg: #2f333d; --button-hover: #3a3f4b;
+    --accent: #f1c40f; --accent-text: #1b1d23;
+    --canvas-bg: #22242c; --empty-cell: #2a2d36; --grid-line: #1b1d23;
+    --overlay-bg: rgba(10,10,14,0.82);
+    --callout-bg: rgba(30,32,40,0.95); --callout-text: #e8e8ec;
+    --row-alt: rgba(255,255,255,0.04);
+    --log-bg: #16171c;
+  }
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f5f6f8; --fg: #1b1d23; --muted: #5a5f6d;
+    --panel-bg: #ffffff; --panel-border: #d8dae0;
+    --border: #b7bcc7; --border-dim: #d7dae1;
+    --input-bg: #ffffff;
+    --button-bg: #e9ebf0; --button-hover: #dde0e7;
+    --accent: #a8790a; --accent-text: #ffffff;
+    --canvas-bg: #eef0f4; --empty-cell: #dfe2e8; --grid-line: #c3c7d1;
+    --overlay-bg: rgba(255,255,255,0.85);
+    --callout-bg: rgba(255,255,255,0.96); --callout-text: #1b1d23;
+    --row-alt: rgba(0,0,0,0.045);
+    --log-bg: #e7e9ee;
+  }
   html, body {
     margin: 0; padding: 0; height: 100%;
-    background: #1b1d23; color: #e8e8ec;
+    background: var(--bg); color: var(--fg);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     overscroll-behavior: none;
   }
@@ -21,54 +86,60 @@
     display: flex; flex-direction: column; align-items: center;
     gap: 8px; max-width: 720px; flex: 1 1 480px;
   }
-  header { display: flex; justify-content: space-between; align-items: center; width: 100%; }
-  h1 { font-size: 18px; margin: 0; font-weight: 600; color: #cfd3dc; }
-  h1 small { color: #6d7180; font-weight: 400; }
-  #scoreLine { font-size: 15px; color: #e8e8ec; }
-  #scoreLine b { color: #f1c40f; }
+  header { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 8px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; color: var(--fg); }
+  h1 small { color: var(--muted); font-weight: 400; }
+  #scoreLine { font-size: 15px; color: var(--fg); }
+  #scoreLine b { color: var(--accent); }
   button {
-    background: #2f333d; color: #e8e8ec; border: 1px solid #454a58;
+    background: var(--button-bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer;
   }
-  button:hover { background: #3a3f4b; }
+  button:hover { background: var(--button-hover); }
+  #themeToggleBtn { font-size: 15px; padding: 6px 9px; line-height: 1; }
   #stage-wrap { position: relative; touch-action: none; }
-  canvas { display: block; touch-action: none; background: #22242c; border-radius: 8px; }
+  canvas { display: block; touch-action: none; background: var(--canvas-bg); border-radius: 8px; }
   #overlay {
     position: absolute; inset: 0; display: none; flex-direction: column;
     align-items: center; justify-content: center; gap: 12px;
-    background: rgba(10,10,14,0.82); border-radius: 8px;
+    background: var(--overlay-bg); border-radius: 8px;
   }
   #overlay.show { display: flex; }
-  #overlay h2 { margin: 0; font-size: 22px; }
-  #bestDelta { font-size: 13px; color: #7a7e8c; }
-  #bestDelta.new-best { color: #f1c40f; font-weight: 600; }
+  #overlay h2 { margin: 0; font-size: 22px; color: var(--fg); }
+  #bestDelta { font-size: 13px; color: var(--muted); }
+  #bestDelta.new-best { color: var(--accent); font-weight: 600; }
   #submitScoreRow { display: flex; gap: 6px; align-items: center; }
   #submitScoreRow input {
-    background: #2f333d; color: #e8e8ec; border: 1px solid #454a58;
+    background: var(--input-bg); color: var(--fg); border: 1px solid var(--border);
     border-radius: 6px; padding: 6px 8px; font-size: 13px; width: 140px;
   }
-  #submitStatus { font-size: 12px; color: #7a7e8c; min-height: 1em; }
+  #submitStatus { font-size: 12px; color: var(--muted); min-height: 1em; }
   #sidebar {
-    flex: 0 0 220px; background: #22242c; border: 1px solid #2c2f38;
+    flex: 0 0 220px; background: var(--panel-bg); border: 1px solid var(--panel-border);
     border-radius: 8px; padding: 12px; align-self: stretch;
   }
-  #sidebar h2 { margin: 0 0 8px; font-size: 15px; color: #cfd3dc; }
-  #leaderboardList { list-style: none; margin: 0; padding: 0; font-size: 14px; }
-  #leaderboardList li { display: flex; justify-content: space-between; padding: 3px 4px; }
-  #leaderboardList li:nth-child(odd) { background: rgba(255,255,255,0.04); }
-  #legend { font-size: 11px; color: #7a7e8c; width: 100%; text-align: left; line-height: 1.5; }
+  #sidebar h2 { margin: 0 0 8px; font-size: 15px; color: var(--fg); }
+  #leaderboardList { list-style: none; margin: 0; padding: 0; font-size: 14px; color: var(--fg); }
+  #leaderboardList li { display: flex; justify-content: space-between; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 4px; }
+  #leaderboardList li:nth-child(odd) { background: var(--row-alt); }
+  #leaderboardList li .rank-icon { width: 1.1em; text-align: center; flex: 0 0 auto; }
+  #leaderboardList li .name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #leaderboardList li.rank-1 { border: 1px solid #d4a30f; background: rgba(241,196,15,0.16); }
+  #leaderboardList li.rank-2 { border: 1px solid #9a9ea8; background: rgba(154,158,168,0.16); }
+  #leaderboardList li.rank-3 { border: 1px solid #b06b2c; background: rgba(176,107,44,0.16); }
+  #legend { font-size: 11px; color: var(--muted); width: 100%; text-align: left; line-height: 1.5; }
   /* #log (debug event panel) is dev-only — see main.js DEBUG_LOG_PANEL flag.
      Hidden by default so shipped builds never show raw engine log lines to
      playtesters; only unhidden at runtime via ?debug=1, never by default. */
   #log {
     display: none;
-    width: 100%; height: 140px; overflow-y: auto; background: #16171c;
-    border: 1px solid #2c2f38; border-radius: 6px; padding: 8px 10px;
+    width: 100%; height: 140px; overflow-y: auto; background: var(--log-bg);
+    border: 1px solid var(--panel-border); border-radius: 6px; padding: 8px 10px;
     font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11.5px;
-    color: #9aa0ae; line-height: 1.5;
+    color: var(--muted); line-height: 1.5;
   }
   #log.show { display: block; }
-  #log .warn { color: #f1c40f; }
+  #log .warn { color: var(--accent); }
   #log .over { color: #e74c3c; }
 </style>
 </head>
@@ -80,6 +151,7 @@
       <div id="scoreLine">Score: <b id="scoreVal">0</b> &nbsp; Best: <b id="bestVal">0</b></div>
       <button id="newGameBtn">New Game</button>
       <button id="quitBtn">Quit</button>
+      <button id="themeToggleBtn" title="Toggle light/dark mode" aria-label="Toggle light/dark mode">🌙</button>
     </header>
 
     <div id="stage-wrap">
@@ -110,7 +182,7 @@
   </div>
 
   <aside id="sidebar">
-    <h2>Leaderboard</h2>
+    <h2>Top 10 Scores</h2>
     <ol id="leaderboardList"></ol>
   </aside>
 </div>

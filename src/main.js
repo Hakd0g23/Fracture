@@ -24,7 +24,46 @@ const nameInput = document.getElementById('nameInput');
 const submitScoreBtn = document.getElementById('submitScoreBtn');
 const submitStatusEl = document.getElementById('submitStatus');
 const leaderboardListEl = document.getElementById('leaderboardList');
+const themeToggleBtn = document.getElementById('themeToggleBtn');
 const LS_KEY_PLAYER_NAME = 'fracture.playerName';
+
+// ---- light/dark theme -------------------------------------------------
+// index.html defines the actual colors as CSS custom properties (light
+// block under @media prefers-color-scheme, both explicit under
+// [data-theme="light"|"dark"]); this just decides which one wins and
+// persists an explicit user choice. The canvas renderer isn't CSS, so
+// theme() below re-reads the resolved custom properties every draw() call
+// instead of hardcoding hex values that would go stale on toggle.
+const LS_KEY_THEME = 'fracture.theme';
+
+function effectiveTheme() {
+  const stored = (() => { try { return localStorage.getItem(LS_KEY_THEME); } catch { return null; } })();
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  themeToggleBtn.textContent = theme === 'light' ? '☀️' : '🌙';
+}
+
+applyTheme(effectiveTheme());
+themeToggleBtn.addEventListener('click', () => {
+  const next = effectiveTheme() === 'light' ? 'dark' : 'light';
+  try { localStorage.setItem(LS_KEY_THEME, next); } catch { /* ignore (private mode, etc.) */ }
+  applyTheme(next);
+  draw();
+});
+
+function theme() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name) => cs.getPropertyValue(name).trim();
+  return {
+    muted: v('--muted'), fg: v('--fg'), border: v('--border'), borderDim: v('--border-dim'),
+    emptyCell: v('--empty-cell'), gridLine: v('--grid-line'), accent: v('--accent'),
+    calloutBg: v('--callout-bg'), calloutText: v('--callout-text'),
+  };
+}
 
 // ---- dev-only debug log panel ----------------------------------------------
 // The raw engine event log (state.log) is a debugging aid, not a shipped
@@ -231,13 +270,14 @@ function drawCallout(text, anchorX, anchorY, align = 'left') {
   if (align === 'right') x = anchorX - w;
   x = Math.max(GAP, Math.min(x, layout.width - w - GAP));
   const y = anchorY;
-  ctx.fillStyle = 'rgba(30,32,40,0.95)';
-  ctx.strokeStyle = '#f1c40f';
+  const t = theme();
+  ctx.fillStyle = t.calloutBg;
+  ctx.strokeStyle = t.accent;
   ctx.lineWidth = 1.5;
   roundRect(x, y, w, h, 6);
   ctx.fill();
   ctx.stroke();
-  ctx.fillStyle = '#e8e8ec';
+  ctx.fillStyle = t.calloutText;
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x + paddingX, y + h / 2 + 1);
   ctx.restore();
@@ -475,6 +515,7 @@ function roundRect(x, y, w, h, r) {
 
 function draw() {
   ctx.save();
+  const t = theme();
   ctx.clearRect(0, 0, layout.width, layout.height);
   // Screen shake: jitter the whole draw via ctx.translate, applied only to
   // the board/piece drawing below (restored before UI chrome would matter --
@@ -484,14 +525,14 @@ function draw() {
   ctx.translate(shakeOffset.x, shakeOffset.y);
 
   // --- shard queue row ---
-  ctx.fillStyle = '#7a7e8c';
+  ctx.fillStyle = t.muted;
   ctx.font = '11px -apple-system, sans-serif';
   ctx.textBaseline = 'bottom';
   ctx.fillText(`Shard Queue (${state.shardQueue.length}/${QUEUE_CAP})`, GAP, layout.queueY - 4);
   for (let i = 0; i < QUEUE_CAP; i++) {
     const x = GAP + i * (QUEUE_SLOT + 8);
     const y = layout.queueY;
-    ctx.strokeStyle = i < state.shardQueue.length ? '#454a58' : '#33363f';
+    ctx.strokeStyle = i < state.shardQueue.length ? t.border : t.borderDim;
     ctx.setLineDash(state.shardQueue[i] ? [] : [4, 3]);
     roundRect(x, y, QUEUE_SLOT, QUEUE_SLOT, 6);
     ctx.stroke();
@@ -512,8 +553,8 @@ function draw() {
       const x = layout.gridX + c * cellSize;
       const y = layout.gridY + r * cellSize;
       const cell = state.board[r][c];
-      ctx.fillStyle = cell ? cell.color : '#2a2d36';
-      ctx.strokeStyle = '#1b1d23';
+      ctx.fillStyle = cell ? cell.color : t.emptyCell;
+      ctx.strokeStyle = t.gridLine;
       ctx.lineWidth = 2;
       ctx.fillRect(x, y, cellSize, cellSize);
       ctx.strokeRect(x, y, cellSize, cellSize);
@@ -584,7 +625,7 @@ function draw() {
   }
 
   // --- tray row ---
-  ctx.fillStyle = '#7a7e8c';
+  ctx.fillStyle = t.muted;
   ctx.fillText('Tray', GAP, layout.trayY - 4);
   const trayStartX = (layout.width - layout.trayRowW) / 2;
   let overflowCalloutAnchor = null;
@@ -599,7 +640,7 @@ function draw() {
     // insertShard's arrivedViaOverflow tag).
     const isOverflowSlot = i >= TRAY_BASE_SIZE || (piece && piece.arrivedViaOverflow);
     if (isOverflowSlot) overflowCalloutAnchor = { x, y };
-    ctx.strokeStyle = isOverflowSlot ? '#f1c40f' : '#454a58';
+    ctx.strokeStyle = isOverflowSlot ? t.accent : t.border;
     ctx.setLineDash(state.tray[i] ? [] : [4, 3]);
     roundRect(x, y, TRAY_SLOT_W, TRAY_SLOT_H, 8);
     ctx.stroke();
@@ -607,7 +648,7 @@ function draw() {
     if (isOverflowSlot) {
       // Non-color cue alongside the yellow border, for colorblind
       // accessibility (flagged as optional-but-cheap in the design doc).
-      ctx.fillStyle = '#f1c40f';
+      ctx.fillStyle = t.accent;
       ctx.font = '11px -apple-system, sans-serif';
       ctx.textBaseline = 'top';
       ctx.fillText('⚠', x + TRAY_SLOT_W - 16, y + 3); // warning triangle glyph
@@ -844,15 +885,21 @@ async function renderLeaderboard() {
     leaderboardListEl.appendChild(li);
     return;
   }
-  for (const row of rows) {
+  const medals = ['🥇', '🥈', '🥉'];
+  rows.forEach((row, i) => {
     const li = document.createElement('li');
+    if (i < 3) li.classList.add(`rank-${i + 1}`);
+    const icon = document.createElement('span');
+    icon.className = 'rank-icon';
+    icon.textContent = i < 3 ? medals[i] : String(i + 1);
     const name = document.createElement('span');
+    name.className = 'name';
     name.textContent = row.name;
     const score = document.createElement('span');
     score.textContent = row.score;
-    li.append(name, score);
+    li.append(icon, name, score);
     leaderboardListEl.appendChild(li);
-  }
+  });
 }
 
 renderLeaderboard(); // sidebar is always visible, so populate it on load
